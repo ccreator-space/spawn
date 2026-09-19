@@ -255,6 +255,8 @@ export function createApp(db: Db) {
   const webRoot = join(process.cwd(), "dist-web");
   app.use("/assets/*", serveStatic({ root: webRoot }));
   app.use("/sponsors/*", serveStatic({ root: webRoot }));
+  app.use("/logo.png", serveStatic({ root: webRoot }));
+  app.use("/favicon.ico", serveStatic({ root: webRoot }));
   app.get("/*", (c) => {
     try { return c.html(readFileSync(join(webRoot, "index.html"), "utf8")); }
     catch { return c.text("Run pnpm build or open the Vite dev server.", 404); }
