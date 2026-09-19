@@ -38,6 +38,20 @@ pnpm start
 
 Bu durumda arayüz ve API `http://localhost:3001` adresindedir. Yerel kayıtlar `data/sponsor.db` dosyasında tutulur; `data/` Git deposuna ve Docker imajına dahil edilmez.
 
+## Dokploy ile yayınlama
+
+Dokploy'da yeni bir **Application** oluşturup bu depoyu `main` dalından bağla; build türü olarak **Dockerfile** seç. Uygulamayı tek replika ile çalıştır ve şu ayarları yap:
+
+| Ayar | Değer |
+| --- | --- |
+| Ortam | `NODE_ENV=production`, `PORT=3001`, `DATA_DIR=/app/data`, `APP_ORIGIN=https://<alan-adın>` |
+| Kalıcı alan | Adlandırılmış Docker volume → `/app/data` |
+| Domain | Konteyner portu `3001`, HTTPS için Let's Encrypt |
+
+İlk kurulumda aynı volume içinde veritabanı ve yönetici hesabı oluşturulmalıdır. Bunun için ilk dağıtımda geçici bir **Run Command** kullan: komut `/bin/sh`, argümanlar `-c` ve `node -e "import('./dist/server/db.js').then(m => { const db = m.openDb(); db.close(); })" && exec node dist/server/index.js`. Konteyner çalışınca terminalinden `node /app/dist/server/create-admin.js sen@ornek.com` komutuyla hesabı oluştur; parola etkileşimli olarak gizli istenir. Ardından geçici Run Command ayarını kaldırıp varsayılan Dockerfile komutuyla yeniden dağıt. Üretim uygulaması eksik veritabanıyla bilinçli olarak başlamaz; yanlış volume bağlaması boş bir hesapla sessizce açılmaz.
+
+Yeni bir sürümü dağıtmadan önce `node /app/dist/server/backup.js` ile çalışan SQLite veritabanının tutarlı bir yedeğini al. Dokploy **Schedules** bölümünde bu komutu günlük çalıştırabilirsin. Yedekler volume içindeki `backups/` dizininde kalır; ayrıca sunucu dışında da saklanmalıdır. Yeni imaj oluşturulurken mevcut volume'u değiştirme veya silme.
+
 ## Docker Compose ile VPS kurulumu
 
 1. `.env.example` dosyasını `.env` olarak kopyala ve `APP_DOMAIN` değerini sunucunun alan adına ayarla. DNS kaydını VPS'e yönlendir; 80 ve 443 portlarını aç.
