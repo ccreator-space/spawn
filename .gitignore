@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+dist/
+dist-web/
+data/
+.env
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+PLAN.md

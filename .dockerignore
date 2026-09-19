@@ -1,0 +1,8 @@
+node_modules
+.pnpm-store
+dist
+dist-web
+data
+.env
+.git
+.DS_Store

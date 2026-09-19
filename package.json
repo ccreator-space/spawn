@@ -1,0 +1,42 @@
+{
+  "name": "spon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.1",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "concurrently -k \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:api": "APP_ORIGIN=http://localhost:5173 tsx watch server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "admin:create": "tsx server/create-admin.ts",
+    "admin:create:built": "node dist/server/create-admin.js",
+    "backup": "tsx server/backup.ts",
+    "backup:built": "node dist/server/backup.js",
+    "test": "tsx --test server/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.18.2",
+    "better-sqlite3": "^12.2.0",
+    "hono": "^4.9.9",
+    "lucide-react": "^0.574.0",
+    "poyraz-ui": "3.0.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.2.1",
+    "tailwindcss": "^4.1.18",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
+  }
+}
