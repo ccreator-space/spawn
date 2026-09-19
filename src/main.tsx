@@ -79,7 +79,7 @@ function App() {
   const closeModal = () => { setModal(null); setEditingPublication(null); setEditingTransaction(null); setPresetSlot(null); setError(""); };
   const afterSave = async () => { closeModal(); setRevision((n) => n + 1); await refresh(); };
 
-  if (user === undefined) return <div className="loading-screen">Spon yükleniyor…</div>;
+  if (user === undefined) return <div className="loading-screen">Spawn yükleniyor…</div>;
   if (!user) return needsSetup ? <Setup onSetup={setUser} /> : <Login onLogin={setUser} />;
   const currentSponsor = sponsors.find((s) => s.id === selectedSponsorId) || null;
   const headline = page === "dashboard" ? "Genel bakış" : page === "calendar" ? "İçerik takvimi" : page === "finance" ? "Finans" : currentSponsor ? currentSponsor.name : "Sponsorlar";
@@ -92,7 +92,7 @@ function App() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand-mark"><img className="brand-logo" src="/logo.png" alt="" /><span><strong>Spon</strong><small>İçerik & iş ortaklıkları</small></span></div>
+      <div className="brand-mark"><img className="brand-logo" src="/logo.png" alt="" /><span><strong>Spawn</strong><small>İçerik & iş ortaklıkları</small></span></div>
       
       <nav>{menu.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${page === key ? "active" : ""}`} onClick={() => { setPage(key); setSelectedSponsorId(null); if (key === "dashboard") setWeek(todayIstanbul()); }}><Icon size={18} /> {label}</button>)}</nav>
       <div className="sidebar-spacer" />

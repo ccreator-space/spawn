@@ -6,7 +6,7 @@ export async function latestRate(): Promise<Rate | null> {
   try {
     const response = await fetch("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", {
       signal: AbortSignal.timeout(8000),
-      headers: { "User-Agent": "Spon/0.1" },
+      headers: { "User-Agent": "Spawn/0.1" },
     });
     if (!response.ok) throw new Error(`ECB ${response.status}`);
     const body = await response.text();
