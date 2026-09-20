@@ -3,6 +3,7 @@
   <h1>Spawn</h1>
   <p>İçerik takvimi, sponsorluk anlaşmaları ve ödemeler için kişisel çalışma alanı.</p>
   <p><strong>Self-hosted · React · Poyraz UI · Hono · SQLite</strong></p>
+  <p><a href="https://spawn.poyrazavsever.com">Canlı uygulama</a></p>
 </div>
 
 Spawn; YouTube, Instagram, TikTok, LinkedIn ve X yayınlarını haftalık bir düzende planlamak ve sponsorlu içeriklerin finansal durumunu izlemek için geliştirildi. Çekim takvimi, e-posta içe aktarımı ve banka bağlantısı içermez; gerçek yayın ve ödeme kayıtları kullanıcı tarafından girilir.
