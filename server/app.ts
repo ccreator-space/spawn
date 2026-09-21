@@ -174,6 +174,7 @@ export function createApp(db: Db) {
   });
   app.post("/api/publications", async (c) => {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    body.slot_id = resolvedSlotId(body);
     const error = validatePublication(body, db);
     if (error) return c.json({ error }, 400);
     const id = randomUUID();
@@ -196,6 +197,7 @@ export function createApp(db: Db) {
     const id = c.req.param("id");
     if (!db.prepare("SELECT 1 FROM publications WHERE id = ?").get(id)) return c.json({ error: "Yayın bulunamadı." }, 404);
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    body.slot_id = resolvedSlotId(body);
     const error = validatePublication(body, db);
     if (error) return c.json({ error }, 400);
     try {
@@ -286,11 +288,19 @@ function validatePublication(body: Record<string, unknown>, db: Db): string | nu
   return null;
 }
 
+function resolvedSlotId(body: Record<string, unknown>): string | null {
+  if (!validDate(body.planned_date) || typeof body.platform !== "string" || typeof body.format !== "string") return null;
+  const requested = typeof body.slot_id === "string" ? WEEKLY_SLOTS.find((slot) => slot.id === body.slot_id) : undefined;
+  if (requested) return requested.id;
+  const weekday = new Date(`${body.planned_date}T12:00:00Z`).getUTCDay();
+  return WEEKLY_SLOTS.find((slot) => slot.weekday === weekday && slot.platform === body.platform && slot.format === body.format)?.id ?? null;
+}
+
 function validateTransaction(body: Record<string, unknown>, db: Db): string | null {
-  if ((body.kind !== "income" && body.kind !== "expense") || !positiveMinor(body.amount_minor) || !currencyOk(body.currency) || !validDate(body.occurred_on))
+  if ((body.kind !== "income" && body.kind !== "expense" && body.kind !== "credit") || !positiveMinor(body.amount_minor) || !currencyOk(body.currency) || !validDate(body.occurred_on))
     return "İşlem türü, tutar, para birimi veya tarih geçersiz.";
   const sponsorId = textValue(body.sponsor_id, 100) || null;
-  if (body.kind === "income" && !sponsorId) return "Tahsilat için sponsor seçin.";
+  if ((body.kind === "income" || body.kind === "credit") && !sponsorId) return "Tahsilat veya platform kredisi için sponsor seçin.";
   if (sponsorId && !db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(sponsorId)) return "Sponsor bulunamadı.";
   const publicationId = textValue(body.publication_id, 100) || null;
   if (publicationId) {

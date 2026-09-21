@@ -54,12 +54,15 @@ test("sponsor, publication, receipt and remaining balance stay distinct", async 
   const paymentId = (await payment.json()).id;
   const corrected = await app.request(`/api/transactions/${paymentId}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ sponsor_id: id, kind: "income", amount_minor: 45_000, currency: "USD", occurred_on: "2026-09-22", note: "Düzeltilmiş kısmi ödeme" }) });
   assert.equal(corrected.status, 200);
+  const credit = await app.request("/api/transactions", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ sponsor_id: id, kind: "credit", amount_minor: 10_000, currency: "USD", occurred_on: "2026-09-22", note: "Platform kredisi" }) });
+  assert.equal(credit.status, 201);
   const detail = await (await app.request(`/api/sponsors/${id}`, { headers: { cookie } })).json();
   assert.equal(detail.planned, 1);
   assert.equal(detail.published, 0);
   assert.equal(detail.money.USD.contracted, 100_000);
   assert.equal(detail.money.USD.received, 45_000);
-  assert.equal(detail.money.USD.outstanding, 55_000);
+  assert.equal(detail.money.USD.credit, 10_000);
+  assert.equal(detail.money.USD.outstanding, 45_000);
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE entity = 'transaction' AND action = 'update'").get() as { n: number }).n, 1);
   db.close();
 });

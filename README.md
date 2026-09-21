@@ -20,8 +20,8 @@ Spawn; YouTube, Instagram, TikTok, LinkedIn ve X içeriklerini haftalık takvimd
 | --- | --- |
 | İçerik takvimi | Sabit haftalık yayın düzeni, içerik durumu ve yayın bağlantıları |
 | Sponsorlar | Her marka için anlaşma, yayın, ödeme ve kalan teslim özeti |
-| Finans | Video başına ücret, kısmi tahsilat, gider ve bekleyen alacak takibi; TL ve USD kayıtları |
-| Kur gösterimi | ECB referans kuruyla yaklaşık TL ve USD toplamları |
+| Finans | Video başına ücret, nakit tahsilat, platform kredisi, gider ve bekleyen alacak takibi |
+| Kur gösterimi | Doviz.dev üzerinden TCMB USD/TL kuru; tek tuşla TL veya USD toplamları |
 | Güvenlik | Parola karması, HTTP-only oturum çerezi, giriş denemesi sınırı ve sunucu tarafı doğrulama |
 | Veri | Tek SQLite dosyası, şema geçişi, bütünlük kontrollü çevrimiçi yedek |
 

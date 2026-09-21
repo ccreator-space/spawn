@@ -22,7 +22,7 @@ export type Db = ReturnType<typeof openDb>;
 
 function migrate(db: Database.Database) {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 1) throw new Error(`Database schema ${version} is newer than this app`);
+  if (version > 2) throw new Error(`Database schema ${version} is newer than this app`);
   db.transaction(() => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -57,7 +57,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY, sponsor_id TEXT REFERENCES sponsors(id),
       publication_id TEXT REFERENCES publications(id),
-      kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
+      kind TEXT NOT NULL CHECK(kind IN ('income','expense','credit')),
       amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
       currency TEXT NOT NULL CHECK(currency IN ('TRY','USD')),
       occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
@@ -70,7 +70,26 @@ function migrate(db: Database.Database) {
       detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  if (version === 0) db.pragma("user_version = 1");
+  if (version === 1) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_transactions_sponsor;
+      ALTER TABLE transactions RENAME TO transactions_v1;
+      CREATE TABLE transactions (
+        id TEXT PRIMARY KEY, sponsor_id TEXT REFERENCES sponsors(id),
+        publication_id TEXT REFERENCES publications(id),
+        kind TEXT NOT NULL CHECK(kind IN ('income','expense','credit')),
+        amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+        currency TEXT NOT NULL CHECK(currency IN ('TRY','USD')),
+        occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO transactions (id, sponsor_id, publication_id, kind, amount_minor, currency, occurred_on, note, created_at)
+        SELECT id, sponsor_id, publication_id, kind, amount_minor, currency, occurred_on, note, created_at FROM transactions_v1;
+      DROP TABLE transactions_v1;
+      CREATE INDEX idx_transactions_sponsor ON transactions(sponsor_id, occurred_on);
+    `);
+  }
+  if (version < 2) db.pragma("user_version = 2");
   const initial = [
     ["hostinger", "Hostinger", "https://hostinger.com/poyraz", "/sponsors/hostinger.png"],
     ["testsprite", "TestSprite", "https://www.testsprite.com/?via=poyraz", "/sponsors/testsprite.png"],

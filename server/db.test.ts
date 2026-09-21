@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.js";
+import Database from "better-sqlite3";
 
 test("reopening an existing database adds sponsors without changing saved records", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "sponsor-upgrade-"));
@@ -24,4 +25,33 @@ test("reopening an existing database adds sponsors without changing saved record
   assert.equal(second.pragma("integrity_check", { simple: true }), "ok");
   second.close();
   assert.throws(() => openDb(join(dir, "wrong-volume.db"), { createIfMissing: false }), /Database is missing/);
+});
+
+test("schema 1 upgrades transactions without losing existing rows", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "sponsor-schema-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "sponsor.db");
+  const legacy = new Database(file);
+  legacy.exec(`
+    CREATE TABLE transactions (
+      id TEXT PRIMARY KEY, sponsor_id TEXT, publication_id TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('income','expense')),
+      amount_minor INTEGER NOT NULL, currency TEXT NOT NULL,
+      occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO transactions (id, kind, amount_minor, currency, occurred_on, note)
+      VALUES ('old-income', 'income', 9900, 'TRY', '2026-09-20', 'Korunacak kayıt');
+    PRAGMA user_version = 1;
+  `);
+  legacy.close();
+
+  const upgraded = openDb(file, { createIfMissing: false });
+  assert.equal(upgraded.pragma("user_version", { simple: true }), 2);
+  assert.equal((upgraded.prepare("SELECT amount_minor FROM transactions WHERE id = 'old-income'").get() as { amount_minor: number }).amount_minor, 9900);
+  upgraded.prepare("INSERT INTO transactions (id, kind, amount_minor, currency, occurred_on) VALUES (?, ?, ?, ?, ?)")
+    .run("new-credit", "credit", 700000, "TRY", "2026-09-21");
+  assert.equal((upgraded.prepare("SELECT kind FROM transactions WHERE id = 'new-credit'").get() as { kind: string }).kind, "credit");
+  assert.equal(upgraded.pragma("integrity_check", { simple: true }), "ok");
+  upgraded.close();
 });
