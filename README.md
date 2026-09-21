@@ -3,7 +3,6 @@
   <h1>Spawn</h1>
   <p>İçerik takvimi, sponsorluk anlaşmaları ve ödemeler için self-hosted çalışma alanı.</p>
   <p><strong>Self-hosted · React · Poyraz UI · Hono · SQLite</strong></p>
-  <p><a href="https://spawn.poyrazavsever.com">Canlı uygulama</a></p>
 </div>
 
 ## Problem
@@ -18,6 +17,7 @@ Spawn; YouTube, Instagram, TikTok, LinkedIn ve X içeriklerini haftalık takvimd
 
 | Alan | Özellikler |
 | --- | --- |
+| İlk kurulum | Platform ikonlarıyla haftalık takvim, sponsorlar, geçmiş içerikler ve finans kayıtları için onboarding |
 | İçerik takvimi | Sabit haftalık yayın düzeni, içerik durumu ve yayın bağlantıları |
 | Sponsorlar | Her marka için anlaşma, yayın, ödeme ve kalan teslim özeti |
 | Finans | Video başına ücret, nakit tahsilat, platform kredisi, gider ve bekleyen alacak takibi |
@@ -34,7 +34,7 @@ pnpm install
 pnpm dev
 ```
 
-Arayüz `http://localhost:5173`, API `http://localhost:3001` adresindedir. İlk yerel açılışta yönetici hesabını tarayıcıdan oluştur. Derlenmiş sürümü tek portta çalıştırmak için:
+Arayüz `http://localhost:5173`, API `http://localhost:3001` adresindedir. İlk yerel açılışta yönetici hesabını tarayıcıdan oluştur. Ardından onboarding ekranında çalışma alanını, haftalık yayın düzenini ve isteğe bağlı başlangıç kayıtlarını gir. Yeni kurulumlar boş başlar; örnek sponsor veya sabit takvim verisi eklenmez. Derlenmiş sürümü tek portta çalıştırmak için:
 
 ```sh
 pnpm build
@@ -53,7 +53,7 @@ Dokploy'da yeni bir **Application** oluşturup bu depoyu `main` dalından bağla
 | Kalıcı alan | Adlandırılmış Docker volume → `/app/data` |
 | Domain | Konteyner portu `3001`, HTTPS için Let's Encrypt |
 
-İlk kurulumda aynı volume içinde veritabanı ve yönetici hesabı oluşturulmalıdır. Bunun için ilk dağıtımda geçici bir **Run Command** kullan: komut `/bin/sh`, argümanlar `-c` ve `node -e "import('./dist/server/db.js').then(m => { const db = m.openDb(); db.close(); })" && exec node dist/server/index.js`. Konteyner çalışınca terminalinden `node /app/dist/server/create-admin.js sen@ornek.com` komutuyla hesabı oluştur; parola etkileşimli olarak gizli istenir. Ardından geçici Run Command ayarını kaldırıp varsayılan Dockerfile komutuyla yeniden dağıt. Üretim uygulaması eksik veritabanıyla bilinçli olarak başlamaz; yanlış volume bağlaması boş bir hesapla sessizce açılmaz.
+İlk kurulumda aynı volume içinde veritabanı ve yönetici hesabı oluşturulmalıdır. Bunun için ilk dağıtımda geçici bir **Run Command** kullan: komut `/bin/sh`, argümanlar `-c` ve `node -e "import('./dist/server/db.js').then(m => { const db = m.openDb(); db.close(); })" && exec node dist/server/index.js`. Konteyner çalışınca terminalinden `node /app/dist/server/create-admin.js sen@ornek.com` komutuyla hesabı oluştur; parola etkileşimli olarak gizli istenir. Ardından geçici Run Command ayarını kaldırıp varsayılan Dockerfile komutuyla yeniden dağıt. İlk girişte onboarding ekranı açılır. Üretim uygulaması eksik veritabanıyla bilinçli olarak başlamaz; yanlış volume bağlaması boş bir hesapla sessizce açılmaz.
 
 Yeni bir sürümü dağıtmadan önce `node /app/dist/server/backup.js` ile çalışan SQLite veritabanının tutarlı bir yedeğini al. Dokploy **Schedules** bölümünde bu komutu günlük çalıştırabilirsin. Yedekler volume içindeki `backups/` dizininde kalır; ayrıca sunucu dışında da saklanmalıdır. Yeni imaj oluşturulurken mevcut volume'u değiştirme veya silme.
 
@@ -93,4 +93,4 @@ pnpm test
 pnpm build
 ```
 
-Haftalık düzen, ilk hesap kurulumu, sponsor/ödeme hesapları ve veri tabanını yeniden açınca kayıtların korunması test edilir.
+Onboarding, haftalık düzen, ilk hesap kurulumu, sponsor/ödeme hesapları, şema geçişleri ve veri tabanını yeniden açınca kayıtların korunması test edilir.

@@ -40,15 +40,26 @@ test("sponsor, publication, receipt and remaining balance stay distinct", async 
   assert.equal(login.status, 200);
   const cookie = login.headers.get("set-cookie")?.split(";")[0];
   assert.ok(cookie);
+  const onboarded = await app.request("/api/onboarding", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({
+    workspace_name: "Test Studio",
+    slots: [{ weekday: 1, platform: "YouTube", format: "long", label: "Uzun video" }],
+    sponsors: [{ client_id: "brand", name: "Test Marka", website_url: "https://example.com", logo_url: "https://example.com/logo.png", notes: "" }],
+    publications: [], transactions: [],
+  }) });
+  assert.equal(onboarded.status, 201);
+  const onboardingStatus = await (await app.request("/api/onboarding", { headers: { cookie } })).json();
+  assert.deepEqual({ completed: onboardingStatus.completed, workspaceName: onboardingStatus.workspaceName, slotCount: onboardingStatus.slotCount, sponsorCount: onboardingStatus.sponsorCount }, { completed: true, workspaceName: "Test Studio", slotCount: 1, sponsorCount: 1 });
+  const repeatedOnboarding = await app.request("/api/onboarding", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ workspace_name: "Silinmemeli", slots: [], sponsors: [], publications: [], transactions: [] }) });
+  assert.equal(repeatedOnboarding.status, 409);
   const sponsor = await (await app.request("/api/sponsors", { headers: { cookie } })).json();
-  const id = sponsor.sponsors.find((s: { slug: string }) => s.slug === "hostinger").id;
+  const id = sponsor.sponsors.find((s: { name: string }) => s.name === "Test Marka").id;
   const content = { sponsor_id: id, platform: "YouTube", format: "long", slot_id: "yt-mon-long", title: "Sponsorlu video", planned_date: "2026-09-21", status: "planned", url: null, fee_minor: 100_000, currency: "USD", notes: "" };
   const created = await app.request("/api/publications", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(content) });
   assert.equal(created.status, 201);
   const duplicate = await app.request("/api/publications", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(content) });
   assert.equal(duplicate.status, 409);
   const available = await (await app.request("/api/available?platform=YouTube&format=long&limit=20", { headers: { cookie } })).json();
-  assert.equal(available.slots.some((slot: { date: string; id: string }) => slot.date === "2026-09-21" && slot.id === "yt-mon-long"), false);
+  assert.equal(available.slots.some((slot: { date: string }) => slot.date === "2026-09-21"), false);
   const payment = await app.request("/api/transactions", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ sponsor_id: id, kind: "income", amount_minor: 40_000, currency: "USD", occurred_on: "2026-09-22", note: "Kısmi ödeme" }) });
   assert.equal(payment.status, 201);
   const paymentId = (await payment.json()).id;

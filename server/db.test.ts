@@ -6,19 +6,19 @@ import { join } from "node:path";
 import { openDb } from "./db.js";
 import Database from "better-sqlite3";
 
-test("reopening an existing database adds sponsors without changing saved records", (t) => {
+test("reopening an existing database keeps saved records", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "sponsor-upgrade-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = join(dir, "sponsor.db");
   const first = openDb(file);
   first.prepare("INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)").run("owner", "owner@example.com", "saved-hash");
-  first.prepare("UPDATE sponsors SET notes = ? WHERE id = ?").run("Keep this private note", "hostinger");
+  first.prepare("INSERT INTO sponsors (id, slug, name, notes) VALUES (?, ?, ?, ?)").run("hostinger", "hostinger", "Hostinger", "Keep this private note");
   first.prepare("INSERT INTO transactions (id, sponsor_id, kind, amount_minor, currency, occurred_on, note) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run("receipt", "hostinger", "income", 12345, "USD", "2026-09-19", "Saved payment");
   first.close();
 
   const second = openDb(file, { createIfMissing: false });
-  assert.equal((second.prepare("SELECT COUNT(*) AS n FROM sponsors").get() as { n: number }).n, 9);
+  assert.equal((second.prepare("SELECT COUNT(*) AS n FROM sponsors").get() as { n: number }).n, 1);
   assert.deepEqual(second.prepare("SELECT email, password_hash FROM users WHERE id = 'owner'").get(), { email: "owner@example.com", password_hash: "saved-hash" });
   assert.equal((second.prepare("SELECT notes FROM sponsors WHERE id = 'hostinger'").get() as { notes: string }).notes, "Keep this private note");
   assert.equal((second.prepare("SELECT amount_minor FROM transactions WHERE id = 'receipt'").get() as { amount_minor: number }).amount_minor, 12345);
@@ -47,11 +47,21 @@ test("schema 1 upgrades transactions without losing existing rows", (t) => {
   legacy.close();
 
   const upgraded = openDb(file, { createIfMissing: false });
-  assert.equal(upgraded.pragma("user_version", { simple: true }), 2);
+  assert.equal(upgraded.pragma("user_version", { simple: true }), 3);
   assert.equal((upgraded.prepare("SELECT amount_minor FROM transactions WHERE id = 'old-income'").get() as { amount_minor: number }).amount_minor, 9900);
   upgraded.prepare("INSERT INTO transactions (id, kind, amount_minor, currency, occurred_on) VALUES (?, ?, ?, ?, ?)")
     .run("new-credit", "credit", 700000, "TRY", "2026-09-21");
   assert.equal((upgraded.prepare("SELECT kind FROM transactions WHERE id = 'new-credit'").get() as { kind: string }).kind, "credit");
+  assert.equal((upgraded.prepare("SELECT COUNT(*) AS n FROM schedule_slots").get() as { n: number }).n, 25);
+  assert.equal((upgraded.prepare("SELECT onboarding_completed FROM workspace_settings WHERE id = 1").get() as { onboarding_completed: number }).onboarding_completed, 1);
   assert.equal(upgraded.pragma("integrity_check", { simple: true }), "ok");
   upgraded.close();
+});
+
+test("fresh databases start empty and require onboarding", () => {
+  const db = openDb(":memory:");
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM sponsors").get() as { n: number }).n, 0);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM schedule_slots").get() as { n: number }).n, 0);
+  assert.equal((db.prepare("SELECT onboarding_completed FROM workspace_settings WHERE id = 1").get() as { onboarding_completed: number }).onboarding_completed, 0);
+  db.close();
 });

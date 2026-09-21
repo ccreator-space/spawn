@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { WEEKLY_SLOTS } from "./schedule.js";
 
 export const dataDir = process.env.DATA_DIR || join(process.cwd(), "data");
 
@@ -22,7 +23,7 @@ export type Db = ReturnType<typeof openDb>;
 
 function migrate(db: Database.Database) {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 2) throw new Error(`Database schema ${version} is newer than this app`);
+  if (version > 3) throw new Error(`Database schema ${version} is newer than this app`);
   db.transaction(() => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -69,6 +70,18 @@ function migrate(db: Database.Database) {
       entity TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL,
       detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS workspace_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1), workspace_name TEXT NOT NULL DEFAULT 'Spawn',
+      onboarding_completed INTEGER NOT NULL DEFAULT 0 CHECK(onboarding_completed IN (0, 1)),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS schedule_slots (
+      id TEXT PRIMARY KEY, weekday INTEGER NOT NULL CHECK(weekday BETWEEN 0 AND 6),
+      platform TEXT NOT NULL, format TEXT NOT NULL, label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_slots_day ON schedule_slots(weekday, sort_order);
   `);
   if (version === 1) {
     db.exec(`
@@ -89,19 +102,12 @@ function migrate(db: Database.Database) {
       CREATE INDEX idx_transactions_sponsor ON transactions(sponsor_id, occurred_on);
     `);
   }
-  if (version < 2) db.pragma("user_version = 2");
-  const initial = [
-    ["hostinger", "Hostinger", "https://hostinger.com/poyraz", "/sponsors/hostinger.png"],
-    ["testsprite", "TestSprite", "https://www.testsprite.com/?via=poyraz", "/sponsors/testsprite.png"],
-    ["minimax", "MiniMax", "https://platform.minimax.io/subscribe/coding-plan?code=7aH9b0Ya7c&source=link", "/sponsors/minimax.png"],
-    ["higgsfield", "Higgsfield", "https://higgsfield.ai/s/higgsfield-mcp-3-0-yt-poyrazavsever-lLvqMw", "/sponsors/higgsfield.png"],
-    ["hosting-dunyam", "Hosting Dünyam", "https://hostingdunyam.com", "/sponsors/hosting-dunyam.png"],
-    ["watchman-tower", "Watchman Tower", "https://www.watchmantower.com/", "/sponsors/watchmantower.png"],
-    ["aisa-one", "AIsa One", null, "/sponsors/aisa-one.svg"],
-    ["atoms", "Atoms.dev", "https://atoms.dev", "/sponsors/atoms.png"],
-    ["abacus", "Abacus.ai", "https://abacus.ai", "/sponsors/abacus.png"],
-  ];
-  const insert = db.prepare("INSERT OR IGNORE INTO sponsors (id, slug, name, website_url, logo_url) VALUES (?, ?, ?, ?, ?)");
-  for (const [slug, name, website, logo] of initial) insert.run(slug, slug, name, website, logo);
+  db.prepare("INSERT OR IGNORE INTO workspace_settings (id) VALUES (1)").run();
+  if (version > 0 && version < 3) {
+    const insertSlot = db.prepare("INSERT OR IGNORE INTO schedule_slots (id, weekday, platform, format, label, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+    WEEKLY_SLOTS.forEach((slot, index) => insertSlot.run(slot.id, slot.weekday, slot.platform, slot.format, slot.label, index));
+    db.prepare("UPDATE workspace_settings SET onboarding_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1").run();
+  }
+  if (version < 3) db.pragma("user_version = 3");
   })();
 }

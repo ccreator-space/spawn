@@ -1,4 +1,4 @@
-export type Slot = { id: string; weekday: number; platform: string; format: string; label: string };
+export type Slot = { id: string; weekday: number; platform: string; format: string; label: string; sort_order?: number };
 
 // JavaScript weekdays: Sunday=0, Monday=1.
 export const WEEKLY_SLOTS: Slot[] = [
@@ -46,6 +46,6 @@ export function mondayOf(value: string): string {
   return addDays(value, -((day + 6) % 7));
 }
 
-export function slotsForWeek(monday: string) {
-  return WEEKLY_SLOTS.map((slot) => ({ ...slot, date: addDays(monday, (slot.weekday + 6) % 7) }));
+export function slotsForWeek(monday: string, slots: Slot[] = WEEKLY_SLOTS) {
+  return slots.map((slot) => ({ ...slot, date: addDays(monday, (slot.weekday + 6) % 7) }));
 }

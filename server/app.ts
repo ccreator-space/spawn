@@ -8,7 +8,7 @@ import type { Db } from "./db.js";
 import { checkPassword, createSession, hashPassword, sessionUser, tokenHash } from "./auth.js";
 import { summarizeMoney } from "./finance.js";
 import { latestRate } from "./rates.js";
-import { WEEKLY_SLOTS, mondayOf, slotsForWeek, validDate } from "./schedule.js";
+import { mondayOf, slotsForWeek, validDate, type Slot } from "./schedule.js";
 
 type Sponsor = { id: string; slug: string; name: string; website_url: string | null; logo_url: string | null; notes: string };
 type Publication = {
@@ -23,12 +23,16 @@ type Transaction = {
 
 const failedLogins = new Map<string, { count: number; until: number }>();
 const videoFormats = new Set(["long", "short", "reel", "tiktok", "teaser"]);
+const platforms = new Set(["YouTube", "Instagram", "TikTok", "LinkedIn", "X"]);
 const currencyOk = (value: unknown): value is "TRY" | "USD" => value === "TRY" || value === "USD";
 const statusOk = (value: unknown) => value === "planned" || value === "published" || value === "cancelled";
 const isUrl = (value: unknown) => !value || (typeof value === "string" && /^https?:\/\//i.test(value));
+const isAssetUrl = (value: unknown) => !value || (typeof value === "string" && (/^https?:\/\//i.test(value) || /^\/[a-z0-9/_\-.]+$/i.test(value)));
 const textValue = (value: unknown, max = 1000) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const positiveMinor = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const nonnegativeMinor = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const slugify = (value: string) => value.toLocaleLowerCase("tr").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sponsor";
+const savedSlots = (db: Db) => db.prepare("SELECT id, weekday, platform, format, label, sort_order FROM schedule_slots ORDER BY weekday, sort_order, created_at").all() as Slot[];
 
 export function createApp(db: Db) {
   const app = new Hono<{ Variables: { user: { id: string; email: string } } }>();
@@ -94,6 +98,80 @@ export function createApp(db: Db) {
   });
   app.get("/api/me", (c) => c.json({ user: c.get("user") }));
 
+  app.get("/api/onboarding", (c) => {
+    const settings = db.prepare("SELECT workspace_name, onboarding_completed FROM workspace_settings WHERE id = 1").get() as { workspace_name: string; onboarding_completed: number };
+    return c.json({
+      completed: settings.onboarding_completed === 1,
+      workspaceName: settings.workspace_name,
+      slotCount: (db.prepare("SELECT COUNT(*) AS n FROM schedule_slots").get() as { n: number }).n,
+      sponsorCount: (db.prepare("SELECT COUNT(*) AS n FROM sponsors").get() as { n: number }).n,
+    });
+  });
+
+  app.post("/api/onboarding", async (c) => {
+    const settings = db.prepare("SELECT onboarding_completed FROM workspace_settings WHERE id = 1").get() as { onboarding_completed: number };
+    if (settings.onboarding_completed === 1) return c.json({ error: "İlk kurulum daha önce tamamlanmış." }, 409);
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    const workspaceName = textValue(body.workspace_name, 80);
+    const slots = Array.isArray(body.slots) ? body.slots as Array<Record<string, unknown>> : [];
+    const sponsors = Array.isArray(body.sponsors) ? body.sponsors as Array<Record<string, unknown>> : [];
+    const publications = Array.isArray(body.publications) ? body.publications as Array<Record<string, unknown>> : [];
+    const transactions = Array.isArray(body.transactions) ? body.transactions as Array<Record<string, unknown>> : [];
+    const error = validateOnboarding(workspaceName, slots, sponsors, publications, transactions);
+    if (error) return c.json({ error }, 400);
+
+    try {
+      const counts = db.transaction(() => {
+        const insertedSlots: Slot[] = [];
+        const insertSlot = db.prepare("INSERT INTO schedule_slots (id, weekday, platform, format, label, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+        slots.forEach((item, index) => {
+          const slot = { id: randomUUID(), weekday: Number(item.weekday), platform: textValue(item.platform, 30), format: textValue(item.format, 30), label: textValue(item.label, 120), sort_order: index };
+          insertSlot.run(slot.id, slot.weekday, slot.platform, slot.format, slot.label, index);
+          insertedSlots.push(slot);
+        });
+
+        const sponsorIds = new Map<string, string>();
+        const insertSponsor = db.prepare("INSERT INTO sponsors (id, slug, name, website_url, logo_url, notes) VALUES (?, ?, ?, ?, ?, ?)");
+        for (const item of sponsors) {
+          const id = randomUUID();
+          const clientId = textValue(item.client_id, 100);
+          const name = textValue(item.name, 120);
+          insertSponsor.run(id, `${slugify(name)}-${id.slice(0, 6)}`, name, textValue(item.website_url, 500) || null, textValue(item.logo_url, 1000) || null, textValue(item.notes, 5000));
+          sponsorIds.set(clientId, id);
+        }
+
+        const insertPublication = db.prepare(`INSERT INTO publications
+          (id, sponsor_id, platform, format, slot_id, title, planned_date, published_date, status, url, fee_minor, currency, notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        for (const item of publications) {
+          const sponsorId = sponsorIds.get(textValue(item.sponsor_ref, 100)) || null;
+          const plannedDate = String(item.planned_date);
+          const platform = textValue(item.platform, 30);
+          const format = textValue(item.format, 30);
+          const weekday = new Date(`${plannedDate}T12:00:00Z`).getUTCDay();
+          const slotId = insertedSlots.find((slot) => slot.weekday === weekday && slot.platform === platform && slot.format === format)?.id ?? null;
+          insertPublication.run(randomUUID(), sponsorId, platform, format, slotId, textValue(item.title, 240), plannedDate,
+            item.status === "published" ? (item.published_date || plannedDate) : null, item.status, textValue(item.url, 1000) || null,
+            sponsorId ? item.fee_minor : 0, item.currency, textValue(item.notes, 5000));
+        }
+
+        const insertTransaction = db.prepare(`INSERT INTO transactions
+          (id, sponsor_id, kind, amount_minor, currency, occurred_on, note) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        for (const item of transactions) {
+          const sponsorId = sponsorIds.get(textValue(item.sponsor_ref, 100)) || null;
+          insertTransaction.run(randomUUID(), sponsorId, item.kind, item.amount_minor, item.currency, item.occurred_on, textValue(item.note, 1000));
+        }
+        db.prepare("UPDATE workspace_settings SET workspace_name = ?, onboarding_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1").run(workspaceName);
+        log("workspace", "1", "onboarding", c.get("user").id);
+        return { slots: slots.length, sponsors: sponsors.length, publications: publications.length, transactions: transactions.length };
+      })();
+      return c.json({ ok: true, workspaceName, counts }, 201);
+    } catch (caught) {
+      if (String(caught).includes("UNIQUE")) return c.json({ error: "Aynı tarih ve takvim yuvası için birden fazla içerik var." }, 409);
+      throw caught;
+    }
+  });
+
   app.get("/api/sponsors", (c) => {
     const sponsors = db.prepare("SELECT id, slug, name, website_url, logo_url, notes FROM sponsors ORDER BY name COLLATE NOCASE").all() as Sponsor[];
     const publications = db.prepare("SELECT sponsor_id, format, fee_minor, currency, status FROM publications WHERE sponsor_id IS NOT NULL").all() as Array<Publication>;
@@ -107,11 +185,11 @@ export function createApp(db: Db) {
   app.post("/api/sponsors", async (c) => {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
     const name = textValue(body.name, 120);
-    if (!name || !isUrl(body.website_url)) return c.json({ error: "Geçerli sponsor adı ve bağlantı girin." }, 400);
+    if (!name || !isUrl(body.website_url) || !isAssetUrl(body.logo_url)) return c.json({ error: "Geçerli sponsor adı, web sitesi ve logo bağlantısı girin." }, 400);
     const id = randomUUID();
-    const slug = `${name.toLocaleLowerCase("tr").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${id.slice(0, 6)}`;
-    db.prepare("INSERT INTO sponsors (id, slug, name, website_url, notes) VALUES (?, ?, ?, ?, ?)")
-      .run(id, slug, name, textValue(body.website_url, 500) || null, textValue(body.notes, 5000));
+    const slug = `${slugify(name)}-${id.slice(0, 6)}`;
+    db.prepare("INSERT INTO sponsors (id, slug, name, website_url, logo_url, notes) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, slug, name, textValue(body.website_url, 500) || null, textValue(body.logo_url, 1000) || null, textValue(body.notes, 5000));
     log("sponsor", id, "create", c.get("user").id);
     return c.json({ id }, 201);
   });
@@ -128,9 +206,9 @@ export function createApp(db: Db) {
     if (!db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(id)) return c.json({ error: "Sponsor bulunamadı." }, 404);
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
     const name = textValue(body.name, 120);
-    if (!name || !isUrl(body.website_url)) return c.json({ error: "Geçerli sponsor adı ve bağlantı girin." }, 400);
-    db.prepare("UPDATE sponsors SET name = ?, website_url = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .run(name, textValue(body.website_url, 500) || null, textValue(body.notes, 5000), id);
+    if (!name || !isUrl(body.website_url) || !isAssetUrl(body.logo_url)) return c.json({ error: "Geçerli sponsor adı, web sitesi ve logo bağlantısı girin." }, 400);
+    db.prepare("UPDATE sponsors SET name = ?, website_url = ?, logo_url = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(name, textValue(body.website_url, 500) || null, textValue(body.logo_url, 1000) || null, textValue(body.notes, 5000), id);
     log("sponsor", id, "update", c.get("user").id);
     return c.json({ ok: true });
   });
@@ -145,7 +223,7 @@ export function createApp(db: Db) {
     const publications = db.prepare(`SELECT publications.*, sponsors.name AS sponsor_name FROM publications
       LEFT JOIN sponsors ON sponsors.id = publications.sponsor_id
       WHERE planned_date BETWEEN ? AND ? ORDER BY planned_date, platform`).all(monday, endString) as Publication[];
-    return c.json({ monday, slots: slotsForWeek(monday), publications });
+    return c.json({ monday, slots: slotsForWeek(monday, savedSlots(db)), publications });
   });
   app.get("/api/available", (c) => {
     const platform = c.req.query("platform") || "YouTube";
@@ -159,7 +237,7 @@ export function createApp(db: Db) {
     for (let week = 0; week < 24 && available.length < limit; week++) {
       const start = new Date(`${firstWeek}T12:00:00Z`);
       start.setUTCDate(start.getUTCDate() + week * 7);
-      const slots = slotsForWeek(start.toISOString().slice(0, 10));
+      const slots = slotsForWeek(start.toISOString().slice(0, 10), savedSlots(db));
       for (const slot of slots) {
         if (slot.platform === platform && slot.format === format && slot.date >= today && !occupied.has(`${slot.date}:${slot.id}`)) available.push(slot);
         if (available.length >= limit) break;
@@ -174,7 +252,7 @@ export function createApp(db: Db) {
   });
   app.post("/api/publications", async (c) => {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
-    body.slot_id = resolvedSlotId(body);
+    body.slot_id = resolvedSlotId(body, db);
     const error = validatePublication(body, db);
     if (error) return c.json({ error }, 400);
     const id = randomUUID();
@@ -197,7 +275,7 @@ export function createApp(db: Db) {
     const id = c.req.param("id");
     if (!db.prepare("SELECT 1 FROM publications WHERE id = ?").get(id)) return c.json({ error: "Yayın bulunamadı." }, 404);
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
-    body.slot_id = resolvedSlotId(body);
+    body.slot_id = resolvedSlotId(body, db);
     const error = validatePublication(body, db);
     if (error) return c.json({ error }, 400);
     try {
@@ -277,23 +355,23 @@ function validatePublication(body: Record<string, unknown>, db: Db): string | nu
   if (!isUrl(body.url)) return "Geçerli yayın bağlantısı girin.";
   if (body.status === "published" && !body.url) return "Yayımlanan içerik için bağlantı girin.";
   if (body.status === "published" && body.published_date && !validDate(body.published_date)) return "Gerçek yayın tarihi geçersiz.";
-  const slot = body.slot_id ? WEEKLY_SLOTS.find((s) => s.id === body.slot_id) : null;
+  const slot = body.slot_id ? savedSlots(db).find((s) => s.id === body.slot_id) : null;
   if (body.slot_id && (!slot || slot.platform !== body.platform || slot.format !== body.format || new Date(`${body.planned_date}T12:00:00Z`).getUTCDay() !== slot.weekday))
     return "Seçilen yayın yuvası tarih veya platformla eşleşmiyor.";
-  if (!body.slot_id && (typeof body.platform !== "string" || typeof body.format !== "string" || !["YouTube", "Instagram", "TikTok", "LinkedIn", "X"].includes(body.platform)))
+  if (!body.slot_id && (typeof body.platform !== "string" || typeof body.format !== "string" || !platforms.has(body.platform)))
     return "Geçerli platform ve format seçin.";
   if (body.sponsor_id && !db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(body.sponsor_id)) return "Sponsor bulunamadı.";
-  if (body.sponsor_id && Number(body.fee_minor) > 0 && !videoFormats.has(String(body.format))) return "Ücret yalnız video formatlarında girilebilir.";
   if (!body.sponsor_id && body.fee_minor !== 0) return "Ücret için sponsor seçin.";
   return null;
 }
 
-function resolvedSlotId(body: Record<string, unknown>): string | null {
+function resolvedSlotId(body: Record<string, unknown>, db: Db): string | null {
   if (!validDate(body.planned_date) || typeof body.platform !== "string" || typeof body.format !== "string") return null;
-  const requested = typeof body.slot_id === "string" ? WEEKLY_SLOTS.find((slot) => slot.id === body.slot_id) : undefined;
+  const slots = savedSlots(db);
+  const requested = typeof body.slot_id === "string" ? slots.find((slot) => slot.id === body.slot_id) : undefined;
   if (requested) return requested.id;
   const weekday = new Date(`${body.planned_date}T12:00:00Z`).getUTCDay();
-  return WEEKLY_SLOTS.find((slot) => slot.weekday === weekday && slot.platform === body.platform && slot.format === body.format)?.id ?? null;
+  return slots.find((slot) => slot.weekday === weekday && slot.platform === body.platform && slot.format === body.format)?.id ?? null;
 }
 
 function validateTransaction(body: Record<string, unknown>, db: Db): string | null {
@@ -306,6 +384,50 @@ function validateTransaction(body: Record<string, unknown>, db: Db): string | nu
   if (publicationId) {
     const publication = db.prepare("SELECT sponsor_id, currency FROM publications WHERE id = ?").get(publicationId) as { sponsor_id: string | null; currency: string } | undefined;
     if (!publication || publication.sponsor_id !== sponsorId || publication.currency !== body.currency) return "İşlem videosu sponsor ve para birimiyle eşleşmiyor.";
+  }
+  return null;
+}
+
+function validateOnboarding(
+  workspaceName: string,
+  slots: Array<Record<string, unknown>>,
+  sponsors: Array<Record<string, unknown>>,
+  publications: Array<Record<string, unknown>>,
+  transactions: Array<Record<string, unknown>>,
+): string | null {
+  if (!workspaceName) return "Çalışma alanı adını girin.";
+  if (slots.length < 1 || slots.length > 100) return "Takvime en az bir, en fazla 100 yayın yuvası ekleyin.";
+  const slotKeys = new Set<string>();
+  for (const slot of slots) {
+    if (typeof slot.weekday !== "number" || !Number.isInteger(slot.weekday) || slot.weekday < 0 || slot.weekday > 6 || !platforms.has(String(slot.platform)) || !textValue(slot.format, 30) || !textValue(slot.label, 120))
+      return "Takvimde geçersiz gün, platform, format veya başlık var.";
+    const key = `${slot.weekday}:${slot.platform}:${slot.format}`;
+    if (slotKeys.has(key)) return "Aynı gün, platform ve format için yalnızca bir yuva eklenebilir.";
+    slotKeys.add(key);
+  }
+  if (sponsors.length > 100 || publications.length > 500 || transactions.length > 500) return "İlk kurulum için çok fazla kayıt eklendi.";
+  const sponsorRefs = new Set<string>();
+  for (const sponsor of sponsors) {
+    const ref = textValue(sponsor.client_id, 100);
+    if (!ref || sponsorRefs.has(ref) || !textValue(sponsor.name, 120) || !isUrl(sponsor.website_url) || !isAssetUrl(sponsor.logo_url))
+      return "Sponsor adı, web sitesi veya logo bağlantısı geçersiz.";
+    sponsorRefs.add(ref);
+  }
+  for (const publication of publications) {
+    const sponsorRef = textValue(publication.sponsor_ref, 100);
+    if (sponsorRef && !sponsorRefs.has(sponsorRef)) return "Geçmiş içerikte seçilen sponsor bulunamadı.";
+    if (!textValue(publication.title, 240) || !validDate(publication.planned_date) || !platforms.has(String(publication.platform)) || !textValue(publication.format, 30) || !statusOk(publication.status) || !currencyOk(publication.currency) || !nonnegativeMinor(publication.fee_minor) || !isUrl(publication.url))
+      return "Geçmiş içerik bilgilerinden biri geçersiz.";
+    if (publication.status === "published" && !publication.url) return "Yayımlanmış içerik için bağlantı girin.";
+    if (publication.status === "published" && publication.published_date && !validDate(publication.published_date)) return "Gerçek yayın tarihi geçersiz.";
+    if (!sponsorRef && publication.fee_minor !== 0) return "Ücretli geçmiş içerik için sponsor seçin.";
+  }
+  for (const transaction of transactions) {
+    const sponsorRef = textValue(transaction.sponsor_ref, 100);
+    if (sponsorRef && !sponsorRefs.has(sponsorRef)) return "Finans kaydında seçilen sponsor bulunamadı.";
+    if ((transaction.kind !== "income" && transaction.kind !== "expense" && transaction.kind !== "credit") || !positiveMinor(transaction.amount_minor) || !currencyOk(transaction.currency) || !validDate(transaction.occurred_on))
+      return "Finans kayıtlarından biri geçersiz.";
+    if ((transaction.kind === "income" || transaction.kind === "credit") && !sponsorRef) return "Tahsilat ve platform kredisi için sponsor seçin.";
   }
   return null;
 }

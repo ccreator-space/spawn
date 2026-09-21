@@ -4,6 +4,7 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Textare
 import { CalendarDays, ChartNoAxesCombined, ChevronLeft, ChevronRight, CircleDollarSign, Clapperboard, LogOut, Plus, Search, Users, X as CloseIcon } from "lucide-react";
 import "poyraz-ui/preset.css";
 import "./style.css";
+import { Onboarding, type OnboardingStatus } from "./Onboarding";
 
 type Currency = "TRY" | "USD";
 type MoneyMetric = "contracted" | "received" | "credit" | "spent" | "outstanding";
@@ -50,6 +51,7 @@ const patch = <T,>(path: string, data: unknown) => api<T>(path, { method: "PATCH
 function App() {
   const [user, setUser] = useState<{ email: string } | null | undefined>(undefined);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
   const [selectedSponsorId, setSelectedSponsorId] = useState<string | null>(null);
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
@@ -73,7 +75,7 @@ function App() {
     setUser(null);
   }); }, []);
   const refresh = useCallback(async () => {
-    if (!user) return;
+    if (!user || !onboarding?.completed) return;
     try {
       const [s, c, d, t] = await Promise.all([
         api<{ sponsors: Sponsor[] }>("/sponsors"),
@@ -83,9 +85,10 @@ function App() {
       ]);
       setSponsors(s.sponsors); setSchedule(c); setDashboard(d); setTransactions(t.transactions);
     } catch (e) { setError((e as Error).message); }
-  }, [user, week]);
+  }, [user, week, onboarding?.completed]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (user) api<{ rate: Rate }>("/rate").then((r) => setRate(r.rate)).catch(() => {}); }, [user]);
+  useEffect(() => { if (user) api<OnboardingStatus>("/onboarding").then(setOnboarding).catch((caught) => setError((caught as Error).message)); else setOnboarding(null); }, [user]);
   useEffect(() => { localStorage.setItem("spawn-display-currency", displayCurrency); }, [displayCurrency]);
 
   const openPublication = (slot?: Slot, item?: Publication) => { setPresetSlot(slot || null); setEditingPublication(item || null); setError(""); setModal("publication"); };
@@ -95,7 +98,11 @@ function App() {
 
   if (user === undefined) return <div className="loading-screen">Spawn yükleniyor…</div>;
   if (!user) return needsSetup ? <Setup onSetup={setUser} /> : <Login onLogin={setUser} />;
+  if (!onboarding) return <div className="loading-screen">Çalışma alanı hazırlanıyor…</div>;
+  if (!onboarding.completed) return <Onboarding initialName={onboarding.workspaceName} onComplete={setOnboarding} />;
   const currentSponsor = sponsors.find((s) => s.id === selectedSponsorId) || null;
+  const accountName = user.email.split("@")[0] || "Yönetici";
+  const accountInitials = accountName.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "SP";
   const headline = page === "dashboard" ? "Genel bakış" : page === "calendar" ? "İçerik takvimi" : page === "finance" ? "Finans" : currentSponsor ? currentSponsor.name : "Sponsorlar";
   const menu = [
     { key: "dashboard" as Page, label: "Genel bakış", icon: ChartNoAxesCombined },
@@ -106,11 +113,11 @@ function App() {
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand-mark"><img className="brand-logo" src="/logo.png" alt="" /><span><strong>Spawn</strong><small>İçerik & iş ortaklıkları</small></span></div>
+      <div className="brand-mark"><img className="brand-logo" src="/logo.png" alt="" /><span><strong>Spawn</strong><small>{onboarding.workspaceName}</small></span></div>
       
       <nav>{menu.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${page === key ? "active" : ""}`} onClick={() => { setPage(key); setSelectedSponsorId(null); if (key === "dashboard") setWeek(todayIstanbul()); }}><Icon size={18} /> {label}</button>)}</nav>
       <div className="sidebar-spacer" />
-      <div className="sidebar-foot"><div className="avatar">PA</div><div className="user-meta"><strong>Poyraz</strong><small>{user.email}</small></div><button className="icon-button" title="Çıkış yap" onClick={async () => { await post("/logout", {}); setUser(null); }}><LogOut size={18} /></button></div>
+      <div className="sidebar-foot"><div className="avatar">{accountInitials}</div><div className="user-meta"><strong>{accountName}</strong><small>{user.email}</small></div><button className="icon-button" title="Çıkış yap" onClick={async () => { await post("/logout", {}); setUser(null); }}><LogOut size={18} /></button></div>
     </aside>
     <main className="main-content">
       <header className="topbar"><div><h1>{headline}</h1></div><div className="topbar-actions"><CurrencySwitch value={displayCurrency} onChange={setDisplayCurrency} /><span className="today-chip">{trDate(todayIstanbul())}</span><Button onClick={() => openPublication()}><Plus size={17} /> Yeni içerik</Button></div></header>
@@ -157,7 +164,8 @@ function AmountCards({ data, rate, displayCurrency }: { data: Money; rate: Rate;
 
 function DashboardPage({ data, schedule, sponsors, rate, displayCurrency, onCalendar, onSponsor, onAdd }: { data: Dashboard | null; schedule: Schedule | null; sponsors: Sponsor[]; rate: Rate; displayCurrency: Currency; onCalendar: () => void; onSponsor: (id: string) => void; onAdd: () => void }) {
   const upcoming = schedule?.publications.filter((p) => p.status === "planned").slice(0, 5) || [];
-  return <div className="page-stack"><div className="welcome-panel"><div><h2>Her yayın yerli yerinde.</h2><p>Haftalık içerik düzenin, sponsorlukların ve gelirlerin tek bakışta.</p><Button onClick={onCalendar} variant="outline">Takvime git <ChevronRight size={16} /></Button></div><div className="welcome-numbers"><div><strong>3</strong><span>uzun video</span></div><div><strong>4</strong><span>YouTube Short</span></div><div><strong>25</strong><span>haftalık yayın yuvası</span></div></div></div>
+  const platformCount = new Set(schedule?.slots.map((slot) => slot.platform) || []).size;
+  return <div className="page-stack"><div className="welcome-panel"><div><h2>Her yayın yerli yerinde.</h2><p>Haftalık içerik düzenin, sponsorlukların ve gelirlerin tek bakışta.</p><Button onClick={onCalendar} variant="outline">Takvime git <ChevronRight size={16} /></Button></div><div className="welcome-numbers"><div><strong>{schedule?.slots.length || 0}</strong><span>haftalık yayın yuvası</span></div><div><strong>{platformCount}</strong><span>aktif platform</span></div><div><strong>{sponsors.length}</strong><span>sponsor</span></div></div></div>
     <div className="section-heading"><div><h2>Rakamlarla genel durum</h2></div></div><AmountCards data={data?.money || emptyMoney} rate={rate} displayCurrency={displayCurrency} />
     <div className="two-columns"><Card className="content-card"><CardHeader><div className="card-header-row"><div><CardTitle>Bu haftanın planı</CardTitle></div><Button size="sm" variant="outline" onClick={onCalendar}>Tümünü gör</Button></div></CardHeader><CardContent>{upcoming.length ? upcoming.map((item) => <div className="list-row" key={item.id}><span className={`platform-dot ${item.platform.toLowerCase()}`} /><div className="row-main"><strong>{item.title}</strong><small>{item.platform} · {item.sponsor_name || "Organik içerik"}</small></div><span className="row-date">{shortDate(item.planned_date)}</span></div>) : <Empty text="Henüz gerçek tarihli içerik eklenmedi." action="İçerik ekle" onAction={onAdd} />}</CardContent></Card>
       <Card className="content-card"><CardHeader><CardTitle>Sponsorların</CardTitle></CardHeader><CardContent>{sponsors.slice(0, 5).map((s) => <button className="sponsor-row" onClick={() => onSponsor(s.id)} key={s.id}><SponsorLogo sponsor={s} /><span><strong>{s.name}</strong><small>{s.published || 0} yayımlandı · {s.planned || 0} bekliyor</small></span><ChevronRight size={16} /></button>)}</CardContent></Card></div>
@@ -168,7 +176,7 @@ function CalendarPage({ schedule, onWeek, onAdd }: { schedule: Schedule | null; 
   if (!schedule) return <div className="loading-panel">Takvim yükleniyor…</div>;
   const days = Array.from({ length: 7 }, (_, i) => shiftDate(schedule.monday, i));
   return <div className="page-stack"><div className="calendar-toolbar"><div><h2>{trDate(schedule.monday)} – {trDate(days[6]!)}</h2></div><div className="toolbar-buttons"><Button variant="outline" size="sm" onClick={() => onWeek(todayIstanbul())}>Bu hafta</Button><button className="icon-button bordered" onClick={() => onWeek(shiftDate(schedule.monday, -7))} aria-label="Önceki hafta"><ChevronLeft size={19} /></button><button className="icon-button bordered" onClick={() => onWeek(shiftDate(schedule.monday, 7))} aria-label="Sonraki hafta"><ChevronRight size={19} /></button></div></div>
-    <div className="calendar-scroll"><div className="calendar-grid"><div className="grid-head day-head">Gün</div>{PLATFORMS.map((p) => <div key={p} className={`grid-head platform-head ${p.toLowerCase()}`}>{p}</div>)}{days.map((day, index) => <React.Fragment key={day}><div className="day-cell"><strong>{DAYS[index]}</strong><span>{shortDate(day)}</span></div>{PLATFORMS.map((platform) => <div key={`${day}-${platform}`} className="schedule-cell">{schedule.slots.filter((s) => s.date === day && s.platform === platform).map((slot) => { const item = schedule.publications.find((p) => p.planned_date === day && p.slot_id === slot.id && p.status !== "cancelled"); return <button key={slot.id} className={`slot-card ${item ? item.status : "empty"}`} onClick={() => onAdd(slot, item)}><span className="slot-top"><span className="slot-format">{slot.format}</span>{item ? <Badge variant="outline">{item.status === "published" ? "Yayında" : "Planlı"}</Badge> : <Plus size={15} />}</span><strong>{item?.title || slot.label}</strong>{item?.sponsor_name && <small>{item.sponsor_name}</small>}</button>; })}{schedule.publications.filter((p) => p.planned_date === day && p.platform === platform && !p.slot_id && p.status !== "cancelled").map((item) => <button key={item.id} className={`slot-card ${item.status}`} onClick={() => onAdd(undefined, item)}><span className="slot-format">Ek yayın</span><strong>{item.title}</strong></button>)}</div>)}</React.Fragment>)}</div></div><div className="calendar-footnote">Boş yuvalar haftalık düzenini gösterir; gerçek içerik olarak sayılmaz. Bir yuvaya tıklayarak planlayabilirsin.</div>
+    <div className="calendar-scroll"><div className="calendar-grid"><div className="grid-head day-head">Gün</div>{PLATFORMS.map((p) => <div key={p} className={`grid-head platform-head ${p.toLowerCase()}`}>{p}</div>)}{days.map((day, index) => <React.Fragment key={day}><div className="day-cell"><strong>{DAYS[index]}</strong><span>{shortDate(day)}</span></div>{PLATFORMS.map((platform) => <div key={`${day}-${platform}`} className="schedule-cell">{schedule.slots.filter((s) => s.date === day && s.platform === platform).map((slot) => { const item = schedule.publications.find((p) => p.planned_date === day && p.slot_id === slot.id && p.status !== "cancelled"); return <button key={slot.id} className={`slot-card ${item ? item.status : "empty"}`} onClick={() => onAdd(slot, item)}><span className="slot-top"><span className="slot-format">{slot.format}</span>{item ? <Badge variant="outline">{item.status === "published" ? "Yayında" : "Planlı"}</Badge> : <Plus size={15} />}</span><strong>{item?.title || slot.label}</strong>{item?.sponsor_name && <small>{item.sponsor_name}</small>}</button>; })}{schedule.publications.filter((p) => p.planned_date === day && p.platform === platform && !p.slot_id && p.status !== "cancelled").map((item) => <button key={item.id} className={`slot-card ${item.status}`} onClick={() => onAdd(undefined, item)}><span className="slot-format">{item.format}</span><strong>{item.title}</strong></button>)}</div>)}</React.Fragment>)}</div></div><div className="calendar-footnote">Boş yuvalar haftalık düzenini gösterir; gerçek içerik olarak sayılmaz. Bir yuvaya tıklayarak planlayabilirsin.</div>
   </div>;
 }
 
@@ -193,12 +201,12 @@ function FinancePage({ dashboard, transactions, rate, displayCurrency, onAdd, on
   return <div className="page-stack"><div className="section-heading"><div><h2>Finansal özet</h2><p>Kararlaştırılan ücretler, tahsilatlar ve platform kredileri ayrı izlenir.</p></div><Button onClick={onAdd}><Plus size={17} /> İşlem ekle</Button></div><AmountCards data={dashboard?.money || emptyMoney} rate={rate} displayCurrency={displayCurrency} /><Card className="content-card"><CardHeader><CardTitle>Finans hareketleri</CardTitle></CardHeader><CardContent>{transactions.length ? transactions.map((t) => <button className="finance-row finance-button" key={t.id} onClick={() => onEdit(t)}><span className={`transaction-icon ${t.kind}`}>{t.kind === "income" ? "↓" : t.kind === "credit" ? "◆" : "↑"}</span><div className="row-main"><strong>{t.sponsor_name || "Genel gider"}</strong><small>{t.note || transactionLabel(t.kind)}</small></div><span className="row-date">{trDate(t.occurred_on)}</span><b className={t.kind === "income" ? "positive" : t.kind === "credit" ? "credit" : "negative"}>{t.kind === "expense" ? "−" : "+"}{money(t.amount_minor, t.currency)}</b></button>) : <Empty text="Henüz finans hareketi yok." action="İşlem ekle" onAction={onAdd} />}</CardContent></Card></div>;
 }
 
-function SponsorLogo({ sponsor }: { sponsor: Sponsor }) { return <span className={`sponsor-logo${sponsor.id === "atoms" ? " atoms-logo" : ""}`}>{sponsor.logo_url ? <img src={sponsor.logo_url} alt="" /> : sponsor.name.slice(0, 2).toUpperCase()}</span>; }
+function SponsorLogo({ sponsor }: { sponsor: Sponsor }) { return <span className="sponsor-logo">{sponsor.logo_url ? <img src={sponsor.logo_url} alt="" /> : sponsor.name.slice(0, 2).toUpperCase()}</span>; }
 function Empty({ text, action, onAction }: { text: string; action?: string; onAction?: () => void }) { return <div className="empty-state"><Clapperboard size={25} /><p>{text}</p>{action && onAction && <Button variant="outline" size="sm" onClick={onAction}>{action}</Button>}</div>; }
 
 function SponsorForm({ sponsor, busy, onSubmit }: { sponsor: Sponsor | null; busy: boolean; onSubmit: (data: unknown) => Promise<void> }) {
-  const [name, setName] = useState(sponsor?.name || ""); const [website, setWebsite] = useState(sponsor?.website_url || ""); const [notes, setNotes] = useState(sponsor?.notes || "");
-  return <form className="form-stack" onSubmit={(e) => { e.preventDefault(); void onSubmit({ name, website_url: website, notes }); }}><div className="field"><label>Marka adı *</label><Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Örn. Hostinger" /></div><div className="field"><label>Web sitesi</label><Input type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" /></div><div className="field"><label>Not</label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Sponsorla ilgili kısa notlar" rows={4} /></div><Button type="submit" disabled={busy} className="full-button">{busy ? "Kaydediliyor…" : "Kaydet"}</Button></form>;
+  const [name, setName] = useState(sponsor?.name || ""); const [website, setWebsite] = useState(sponsor?.website_url || ""); const [logo, setLogo] = useState(sponsor?.logo_url || ""); const [notes, setNotes] = useState(sponsor?.notes || "");
+  return <form className="form-stack" onSubmit={(e) => { e.preventDefault(); void onSubmit({ name, website_url: website, logo_url: logo, notes }); }}><div className="field"><label>Marka adı *</label><Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Örn. Acme" /></div><div className="field"><label>Web sitesi</label><Input type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" /></div><div className="field"><label>Logo bağlantısı</label><Input type={logo.startsWith("/") ? "text" : "url"} value={logo} onChange={(e) => setLogo(e.target.value)} placeholder="https://.../logo.png" /></div><div className="field"><label>Not</label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Sponsorla ilgili kısa notlar" rows={4} /></div><Button type="submit" disabled={busy} className="full-button">{busy ? "Kaydediliyor…" : "Kaydet"}</Button></form>;
 }
 
 function PublicationForm({ sponsors, slot, item, defaultSponsor, busy, onSubmit }: { sponsors: Sponsor[]; slot: Slot | null; item: Publication | null; defaultSponsor: string | null; busy: boolean; onSubmit: (data: unknown) => Promise<void> }) {
