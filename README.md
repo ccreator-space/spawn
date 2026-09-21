@@ -1,25 +1,29 @@
 <div align="center">
   <img src="public/logo.png" alt="Spawn logosu" width="104" />
   <h1>Spawn</h1>
-  <p>İçerik takvimi, sponsorluk anlaşmaları ve ödemeler için kişisel çalışma alanı.</p>
+  <p>İçerik takvimi, sponsorluk anlaşmaları ve ödemeler için self-hosted çalışma alanı.</p>
   <p><strong>Self-hosted · React · Poyraz UI · Hono · SQLite</strong></p>
   <p><a href="https://spawn.poyrazavsever.com">Canlı uygulama</a></p>
 </div>
 
-Spawn; YouTube, Instagram, TikTok, LinkedIn ve X yayınlarını haftalık bir düzende planlamak ve sponsorlu içeriklerin finansal durumunu izlemek için geliştirildi. Çekim takvimi, e-posta içe aktarımı ve banka bağlantısı içermez; gerçek yayın ve ödeme kayıtları kullanıcı tarafından girilir.
+## Problem
+
+Birden fazla platformda düzenli içerik üretirken yayın takvimi, sponsor teslimleri ve ödemeler kısa sürede farklı tabloların ve mesajların arasına dağılıyor. Hangi içeriğin yayımlandığını, hangi anlaşmanın tamamlandığını ve hangi ödemenin beklendiğini tek bakışta görmek zorlaşıyor.
+
+## Çözüm
+
+Spawn; YouTube, Instagram, TikTok, LinkedIn ve X içeriklerini haftalık takvimde toplar. Sponsor anlaşmalarını ilgili yayınlar ve finans hareketleriyle aynı çalışma alanında buluşturur. Böylece planlanan içerikten tahsilata kadar bütün süreç tek yerden takip edilir.
 
 ## Neler yapar?
 
 | Alan | Özellikler |
 | --- | --- |
-| İçerik takvimi | Sabit haftalık yayın yuvaları, planlanan/yayımlanan/iptal edilen içerikler, yayın bağlantıları |
-| Sponsorlar | Marka sayfası, anlaşılmış ve yayımlanmış video sayıları, sıradaki boş YouTube uzun video tarihleri |
-| Finans | Video başına sabit ücret, kısmi tahsilat, sponsor giderleri, bekleyen alacak; TL ve USD ayrı kayıtlar |
-| Kur gösterimi | ECB referans kuruyla yaklaşık TL/USD toplamları; banka kuru veya muhasebe kaydı yerine geçmez |
+| İçerik takvimi | Sabit haftalık yayın düzeni, içerik durumu ve yayın bağlantıları |
+| Sponsorlar | Her marka için anlaşma, yayın, ödeme ve kalan teslim özeti |
+| Finans | Video başına ücret, kısmi tahsilat, gider ve bekleyen alacak takibi; TL ve USD kayıtları |
+| Kur gösterimi | ECB referans kuruyla yaklaşık TL ve USD toplamları |
 | Güvenlik | Parola karması, HTTP-only oturum çerezi, giriş denemesi sınırı ve sunucu tarafı doğrulama |
 | Veri | Tek SQLite dosyası, şema geçişi, bütünlük kontrollü çevrimiçi yedek |
-
-Arayüz [Poyraz UI](https://www.npmjs.com/package/poyraz-ui) bileşenleriyle hazırlanmıştır. Yedi başlangıç markası ile Atoms.dev ve Abacus.ai örnek marka listesine eklenir; hiçbir ücret, ödeme veya geçmiş video uydurulmaz.
 
 ## Yerelde çalıştırma
 
