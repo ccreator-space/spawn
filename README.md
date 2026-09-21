@@ -1,31 +1,64 @@
 <div align="center">
-  <img src="public/logo.png" alt="Spawn logosu" width="104" />
+  <img src="public/logo.png" alt="Spawn" width="104" />
   <h1>Spawn</h1>
-  <p>İçerik takvimi, sponsorluk anlaşmaları ve ödemeler için self-hosted çalışma alanı.</p>
-  <p><strong>Self-hosted · React · Poyraz UI · Hono · SQLite</strong></p>
+  <p><strong>İçerik takvimin, sponsor anlaşmaların ve ödemelerin tek çalışma alanında.</strong></p>
+  <p>Self-hosted · React · Poyraz UI · Hono · SQLite</p>
 </div>
 
-## Problem
+![Spawn ürün görünümü](docs/spawn-overview.png)
 
-Birden fazla platformda düzenli içerik üretirken yayın takvimi, sponsor teslimleri ve ödemeler kısa sürede farklı tabloların ve mesajların arasına dağılıyor. Hangi içeriğin yayımlandığını, hangi anlaşmanın tamamlandığını ve hangi ödemenin beklendiğini tek bakışta görmek zorlaşıyor.
+## İçerik üretirken asıl sorun içerik üretmek değil
 
-## Çözüm
+YouTube, Instagram, TikTok, LinkedIn ve X için düzenli paylaşım yaparken planlar takvimde, sponsor konuşmaları mesajlarda, ödeme durumu ise banka hareketlerinde kalıyor. Bir süre sonra basit soruların cevabı zorlaşıyor:
 
-Spawn; YouTube, Instagram, TikTok, LinkedIn ve X içeriklerini haftalık takvimde toplar. Sponsor anlaşmalarını ilgili yayınlar ve finans hareketleriyle aynı çalışma alanında buluşturur. Böylece planlanan içerikten tahsilata kadar bütün süreç tek yerden takip edilir.
+- Bu hafta hangi içerikler yayımlanacak?
+- Hangi sponsor için kaç içerik tamamlandı?
+- Ne kadar ücret kararlaştırıldı, ne kadarı tahsil edildi?
+- Hangi ödeme hâlâ bekleniyor?
 
-## Neler yapar?
+Spawn bu süreci içerik planından tahsilata kadar tek yerde yönetir.
 
-| Alan | Özellikler |
+## Planla, yayımla, tahsil et
+
+| Alan | Spawn ile yapabileceklerin |
 | --- | --- |
-| İlk kurulum | Platform ikonlarıyla haftalık takvim, sponsorlar, geçmiş içerikler ve finans kayıtları için onboarding |
-| İçerik takvimi | Sabit haftalık yayın düzeni, içerik durumu ve yayın bağlantıları |
-| Sponsorlar | Her marka için anlaşma, yayın, ödeme ve kalan teslim özeti |
-| Finans | Video başına ücret, nakit tahsilat, platform kredisi, gider ve bekleyen alacak takibi |
-| Kur gösterimi | Doviz.dev üzerinden TCMB USD/TL kuru; tek tuşla TL veya USD toplamları |
-| Güvenlik | Parola karması, HTTP-only oturum çerezi, giriş denemesi sınırı ve sunucu tarafı doğrulama |
-| Veri | Tek SQLite dosyası, şema geçişi, bütünlük kontrollü çevrimiçi yedek |
+| İçerik takvimi | Her platform için haftalık yayın düzenini oluştur, boş yuvaları ve gerçek içerikleri birlikte gör |
+| Sponsor yönetimi | Marka profili, web sitesi, logo, notlar ve ilgili yayınları tek sayfada tut |
+| Anlaşmalar | İçerik başına ücreti TL veya USD olarak kaydet |
+| Finans | Tahsilat, platform kredisi, gider ve bekleyen alacağı ayrı takip et |
+| Döviz | Doviz.dev üzerinden gelen TCMB referans kuruyla toplamları TL veya USD görüntüle |
+| İlk kurulum | İkonlu onboarding ile takvimini, sponsorlarını ve geçmiş kayıtlarını birkaç adımda içeri al |
 
-## Yerelde çalıştırma
+## İlk açılış sana göre şekillenir
+
+Yeni kurulumlar boş başlar. Onboarding sırasında:
+
+1. Çalışma alanına bir ad verirsin.
+2. YouTube, Instagram, TikTok, LinkedIn ve X için haftalık yayın yuvalarını yerleştirirsin.
+3. Sponsorlarını logo, bağlantı ve notlarıyla eklersin.
+4. İstersen geçmiş içeriklerini ve finans hareketlerini içeri alırsın.
+
+Kurulum tek bir veritabanı işlemiyle tamamlanır. Bir adım başarısız olursa yarım kayıt oluşmaz.
+
+## Mimari
+
+```mermaid
+flowchart LR
+    B[React + Poyraz UI] -->|JSON API| A[Hono]
+    A --> DB[(SQLite)]
+    A --> FX[Doviz.dev]
+    DB --> BK[Çevrimiçi yedekler]
+    C[Caddy / Traefik] --> A
+```
+
+- **Arayüz:** React 19, TypeScript, Vite ve Poyraz UI
+- **API:** Hono ve Node.js
+- **Veri:** Better SQLite3, WAL modu ve sürümlü şema geçişleri
+- **Kimlik doğrulama:** Scrypt parola karması ve HTTP-only oturum çerezi
+- **Dağıtım:** Tek Docker imajı; Dokploy veya Docker Compose
+- **Kalıcılık:** Uygulama imajından ayrı `/app/data` volume’u
+
+## Hızlı başlangıç
 
 Node.js 22+ ve pnpm 11 gerekir.
 
@@ -34,56 +67,73 @@ pnpm install
 pnpm dev
 ```
 
-Arayüz `http://localhost:5173`, API `http://localhost:3001` adresindedir. İlk yerel açılışta yönetici hesabını tarayıcıdan oluştur. Ardından onboarding ekranında çalışma alanını, haftalık yayın düzenini ve isteğe bağlı başlangıç kayıtlarını gir. Yeni kurulumlar boş başlar; örnek sponsor veya sabit takvim verisi eklenmez. Derlenmiş sürümü tek portta çalıştırmak için:
+Arayüz `http://localhost:5173`, API `http://localhost:3001` adresinde açılır. Yerel geliştirme ortamında ilk yönetici hesabını tarayıcıdan oluşturabilir, ardından onboarding akışını tamamlayabilirsin.
+
+Tek porttan production derlemesini çalıştırmak için:
 
 ```sh
 pnpm build
 pnpm start
 ```
 
-Bu durumda arayüz ve API `http://localhost:3001` adresindedir. Yerel kayıtlar `data/sponsor.db` dosyasında tutulur; `data/` Git deposuna ve Docker imajına dahil edilmez.
+## Docker Compose ile self-host
 
-## Dokploy ile yayınlama
+```sh
+cp .env.example .env
+mkdir -p data
+docker compose build app
+docker compose run --rm app node dist/server/create-admin.js sen@ornek.com
+docker compose up -d
+```
 
-Dokploy'da yeni bir **Application** oluşturup bu depoyu `main` dalından bağla; build türü olarak **Dockerfile** seç. Uygulamayı tek replika ile çalıştır ve şu ayarları yap:
+`.env` dosyasında `APP_DOMAIN` değerini kendi alan adınla değiştir. Caddy HTTPS sertifikasını otomatik yönetir ve yalnızca 80/443 portlarını dışarı açar.
+
+Veriler `./data` dizininde kalır. Uygulama imajını yenilemek SQLite dosyasını değiştirmez.
+
+## Dokploy kurulumu
+
+Yeni bir Application oluştur ve şu ayarları kullan:
 
 | Ayar | Değer |
 | --- | --- |
-| Ortam | `NODE_ENV=production`, `PORT=3001`, `DATA_DIR=/app/data`, `APP_ORIGIN=https://<alan-adın>` |
-| Kalıcı alan | Adlandırılmış Docker volume → `/app/data` |
-| Domain | Konteyner portu `3001`, HTTPS için Let's Encrypt |
+| Kaynak | Bu depo, `main` dalı |
+| Build Type | Dockerfile |
+| Environment | `NODE_ENV=production`, `PORT=3001`, `DATA_DIR=/app/data`, `APP_ORIGIN=https://alan-adin` |
+| Volume | Adlandırılmış volume → `/app/data` |
+| Domain | Konteyner portu `3001`, HTTPS açık |
+| Replica | `1` |
 
-İlk kurulumda aynı volume içinde veritabanı ve yönetici hesabı oluşturulmalıdır. Bunun için ilk dağıtımda geçici bir **Run Command** kullan: komut `/bin/sh`, argümanlar `-c` ve `node -e "import('./dist/server/db.js').then(m => { const db = m.openDb(); db.close(); })" && exec node dist/server/index.js`. Konteyner çalışınca terminalinden `node /app/dist/server/create-admin.js sen@ornek.com` komutuyla hesabı oluştur; parola etkileşimli olarak gizli istenir. Ardından geçici Run Command ayarını kaldırıp varsayılan Dockerfile komutuyla yeniden dağıt. İlk girişte onboarding ekranı açılır. Üretim uygulaması eksik veritabanıyla bilinçli olarak başlamaz; yanlış volume bağlaması boş bir hesapla sessizce açılmaz.
+İlk dağıtımda veritabanını volume içinde oluştur. Ardından konteyner terminalinde yönetici hesabını ekle:
 
-Yeni bir sürümü dağıtmadan önce `node /app/dist/server/backup.js` ile çalışan SQLite veritabanının tutarlı bir yedeğini al. Dokploy **Schedules** bölümünde bu komutu günlük çalıştırabilirsin. Yedekler volume içindeki `backups/` dizininde kalır; ayrıca sunucu dışında da saklanmalıdır. Yeni imaj oluşturulurken mevcut volume'u değiştirme veya silme.
+```sh
+node /app/dist/server/create-admin.js sen@ornek.com
+```
 
-## Docker Compose ile VPS kurulumu
+Parola terminalde gizli istenir. İlk girişten sonra onboarding ekranı açılır.
 
-1. `.env.example` dosyasını `.env` olarak kopyala ve `APP_DOMAIN` değerini sunucunun alan adına ayarla. DNS kaydını VPS'e yönlendir; 80 ve 443 portlarını aç.
-2. Kalıcı veri dizinini oluştur: `mkdir -p data`. Konteyner kullanıcısı için dizin sahipliğini `10001:10001` yap.
-3. `docker compose build app` çalıştır.
-4. `docker compose run --rm app node dist/server/create-admin.js sen@ornek.com` ile ilk yönetici hesabını oluştur. Parola terminalde gizli istenir.
-5. `docker compose up -d` çalıştır. Caddy HTTPS sertifikasını yönetir.
+## Güncelleme ve yedek
 
-Yalnızca Caddy dışarı açılır; uygulamanın 3001 portu dışarı yayımlanmaz. Üretim sunucusu mevcut veri tabanı dosyası olmadan başlamaz. Böylece yanlış veya boş bir veri bağlaması, hesapların silinmiş gibi görünmesine yol açmak yerine açık bir hatayla durur. Aynı SQLite dosyasına birden fazla uygulama replikası bağlama.
-
-### Güncelleme
-
-Çalışan uygulamayı proje dizininden güncelle:
+Docker Compose kurulumu için:
 
 ```sh
 sh scripts/update.sh
 ```
 
-Betik, yeni imajı kurmadan önce SQLite yedeği alır ve bütünlüğünü denetler. `data/` dizini konteyner dışında kaldığı için imaj yenilemesi verileri silmez. Son yedeği ayrıca VPS dışındaki güvenli bir konuma kopyala. Güncellemeden sonra giriş yapıp sponsor, içerik ve finans kayıtlarını kontrol et.
-
-### Yedek ve geri yükleme
+Elle yedek almak için:
 
 ```sh
 docker compose exec -T app node dist/server/backup.js
 ```
 
-Yedek `data/backups/` altına yazılır ve bütünlük kontrolünden geçer. Düzenli VPS dışı yedek ve geri yükleme sınaması önerilir. Geri yüklerken uygulamayı durdur, mevcut `data/` dizinini tarihli bir adla kenara al, doğrulanmış `.db` yedeğini yeni `data/sponsor.db` olarak kopyala, dizin sahipliğini `10001:10001` yap ve uygulamayı yeniden başlat. Çalışan SQLite veritabanından yalnızca `.db` dosyasını doğrudan kopyalama; WAL içindeki son işlemler eksik kalabilir.
+Yedekler `data/backups/` altında tutulur ve oluşturulurken SQLite bütünlük kontrolünden geçer. Üretimde bu klasörü düzenli olarak sunucu dışına da kopyala.
+
+## Veri güvenliği
+
+- SQLite WAL modu ve foreign key denetimi aktiftir.
+- Şema yükseltmeleri transaction içinde çalışır.
+- Mevcut veritabanı bulunamazsa production sunucusu boş bir sistemle sessizce başlamaz.
+- Onboarding daha önce tamamlanmış bir çalışma alanında yeniden çalıştırılamaz.
+- Aynı SQLite dosyasını birden fazla uygulama replikasına bağlamamak gerekir.
 
 ## Geliştirme kontrolleri
 
@@ -93,4 +143,8 @@ pnpm test
 pnpm build
 ```
 
-Onboarding, haftalık düzen, ilk hesap kurulumu, sponsor/ödeme hesapları, şema geçişleri ve veri tabanını yeniden açınca kayıtların korunması test edilir.
+Testler ilk kurulum, onboarding, haftalık takvim, finans hesapları, şema geçişleri ve veritabanı yeniden açıldığında kayıtların korunmasını kapsar.
+
+## Lisans
+
+Bu proje henüz bir açık kaynak lisansı yayımlamıyor. Kullanım koşulları için depo sahibiyle iletişime geçebilirsin.
