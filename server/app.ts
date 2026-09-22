@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Db } from "./db.js";
@@ -9,8 +9,6 @@ import { checkPassword, createSession, hashPassword, sessionUser, tokenHash } fr
 import { publicationPayment, summarizeMoney } from "./finance.js";
 import { latestRate } from "./rates.js";
 import { mondayOf, slotsForWeek, validDate, type Slot } from "./schedule.js";
-import { replaceBusinessData } from "./business-data.js";
-import { dataDir } from "./db.js";
 
 type Sponsor = { id: string; slug: string; name: string; website_url: string | null; logo_url: string | null; notes: string; deleted_at?: string | null };
 type Publication = {
@@ -102,17 +100,6 @@ export function createApp(db: Db) {
   });
   app.get("/api/me", (c) => c.json({ user: c.get("user") }));
 
-  app.post("/api/admin/replace-business-data", async (c) => {
-    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
-    if (body.confirmation !== "REPLACE_ALL_BUSINESS_DATA") return c.json({ error: "Eksik veri değiştirme onayı." }, 400);
-    const backupDir = join(dataDir, "backups");
-    mkdirSync(backupDir, { recursive: true });
-    const backup = join(backupDir, `before-replace-${new Date().toISOString().replace(/[:.]/g, "-")}.db`);
-    await db.backup(backup);
-    const result = replaceBusinessData(db, body.data);
-    return c.json({ ok: true, backup, ...result });
-  });
-
   app.get("/api/onboarding", (c) => {
     const settings = db.prepare("SELECT workspace_name, onboarding_completed FROM workspace_settings WHERE id = 1").get() as { workspace_name: string; onboarding_completed: number };
     return c.json({
@@ -189,8 +176,8 @@ export function createApp(db: Db) {
 
   app.get("/api/sponsors", (c) => {
     const sponsors = db.prepare("SELECT id, slug, name, website_url, logo_url, notes FROM sponsors WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE").all() as Sponsor[];
-    const publications = db.prepare("SELECT sponsor_id, format, fee_minor, currency, status FROM publications WHERE sponsor_id IS NOT NULL AND deleted_at IS NULL").all() as Array<Publication>;
-    const transactions = db.prepare("SELECT sponsor_id, kind, amount_minor, currency FROM transactions WHERE sponsor_id IS NOT NULL").all() as Array<Transaction>;
+    const publications = db.prepare("SELECT id, sponsor_id, format, fee_minor, currency, status FROM publications WHERE sponsor_id IS NOT NULL AND deleted_at IS NULL").all() as Array<Publication>;
+    const transactions = db.prepare("SELECT sponsor_id, publication_id, kind, amount_minor, currency, applied_minor, applied_currency FROM transactions WHERE sponsor_id IS NOT NULL").all() as Array<Transaction>;
     return c.json({ sponsors: sponsors.map((sponsor) => {
       const items = publications.filter((item) => item.sponsor_id === sponsor.id);
       const money = summarizeMoney(items, transactions.filter((item) => item.sponsor_id === sponsor.id));
@@ -373,7 +360,7 @@ export function createApp(db: Db) {
     return c.json({ ok: true });
   });
   app.get("/api/dashboard", (c) => {
-    const publications = db.prepare("SELECT sponsor_id, fee_minor, currency, status, planned_date FROM publications WHERE deleted_at IS NULL").all() as Publication[];
+    const publications = db.prepare("SELECT id, sponsor_id, fee_minor, currency, status, planned_date FROM publications WHERE deleted_at IS NULL").all() as Publication[];
     const transactions = db.prepare("SELECT publication_id, kind, amount_minor, currency, applied_minor, applied_currency FROM transactions").all() as Transaction[];
     const sponsorCount = (db.prepare("SELECT COUNT(*) AS n FROM sponsors WHERE deleted_at IS NULL").get() as { n: number }).n;
     return c.json({ sponsorCount, publicationCount: publications.length, publishedCount: publications.filter((p) => p.status === "published").length,

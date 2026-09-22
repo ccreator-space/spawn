@@ -78,6 +78,10 @@ test("sponsor, publication, receipt and remaining balance stay distinct", async 
   assert.equal(detail.publications[0].payment_status, "partial");
   assert.equal(detail.publications[0].paid_minor, 45_000);
   assert.equal(detail.publications[0].outstanding_minor, 55_000);
+  const dashboard = await (await app.request("/api/dashboard", { headers: { cookie } })).json();
+  assert.equal(dashboard.money.USD.outstanding, 45_000);
+  const sponsorSummary = await (await app.request("/api/sponsors", { headers: { cookie } })).json();
+  assert.equal(sponsorSummary.sponsors[0].money.USD.outstanding, 45_000);
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE entity = 'transaction' AND action = 'update'").get() as { n: number }).n, 1);
 
   const removedPublication = await app.request(`/api/publications/${publicationId}`, { method: "DELETE", headers: { cookie } });
