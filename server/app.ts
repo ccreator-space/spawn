@@ -359,6 +359,17 @@ export function createApp(db: Db) {
     })();
     return c.json({ ok: true });
   });
+  app.delete("/api/transactions/:id", (c) => {
+    const id = c.req.param("id");
+    const transaction = db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as Transaction | undefined;
+    if (!transaction) return c.json({ error: "İşlem bulunamadı." }, 404);
+    db.transaction(() => {
+      db.prepare("DELETE FROM transactions WHERE id = ?").run(id);
+      db.prepare("INSERT INTO activity_log (id, user_id, entity, entity_id, action, detail) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(randomUUID(), c.get("user").id, "transaction", id, "delete", JSON.stringify(transaction));
+    })();
+    return c.json({ ok: true });
+  });
   app.get("/api/dashboard", (c) => {
     const publications = db.prepare("SELECT id, sponsor_id, fee_minor, currency, status, planned_date FROM publications WHERE deleted_at IS NULL").all() as Publication[];
     const transactions = db.prepare("SELECT publication_id, kind, amount_minor, currency, applied_minor, applied_currency FROM transactions").all() as Transaction[];

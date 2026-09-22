@@ -84,23 +84,30 @@ test("sponsor, publication, receipt and remaining balance stay distinct", async 
   assert.equal(sponsorSummary.sponsors[0].money.USD.outstanding, 45_000);
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE entity = 'transaction' AND action = 'update'").get() as { n: number }).n, 1);
 
+  const removedPayment = await app.request(`/api/transactions/${paymentId}`, { method: "DELETE", headers: { cookie } });
+  assert.equal(removedPayment.status, 200);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE id = ?").get(paymentId) as { n: number }).n, 0);
+  const detailAfterPaymentRemoval = await (await app.request(`/api/sponsors/${id}`, { headers: { cookie } })).json();
+  assert.equal(detailAfterPaymentRemoval.publications[0].payment_status, "waiting");
+  assert.equal(detailAfterPaymentRemoval.money.USD.outstanding, 90_000);
+
   const removedPublication = await app.request(`/api/publications/${publicationId}`, { method: "DELETE", headers: { cookie } });
   assert.equal(removedPublication.status, 200);
-  assert.equal((await removedPublication.json()).preservedTransactions, 1);
+  assert.equal((await removedPublication.json()).preservedTransactions, 0);
   assert.equal((await (await app.request(`/api/publications?sponsor=${id}`, { headers: { cookie } })).json()).publications.length, 0);
   assert.ok((db.prepare("SELECT deleted_at FROM publications WHERE id = ?").get(publicationId) as { deleted_at: string }).deleted_at);
-  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE publication_id = ?").get(publicationId) as { n: number }).n, 1);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE publication_id = ?").get(publicationId) as { n: number }).n, 0);
 
   const replacement = await app.request("/api/publications", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(content) });
   assert.equal(replacement.status, 201, "a removed calendar slot can be reused");
   const removedSponsor = await app.request(`/api/sponsors/${id}`, { method: "DELETE", headers: { cookie } });
   assert.equal(removedSponsor.status, 200);
-  assert.deepEqual((await removedSponsor.json()).preserved, { publications: 1, transactions: 2 });
+  assert.deepEqual((await removedSponsor.json()).preserved, { publications: 1, transactions: 1 });
   assert.equal((await (await app.request("/api/sponsors", { headers: { cookie } })).json()).sponsors.length, 0);
   assert.equal((await app.request(`/api/sponsors/${id}`, { headers: { cookie } })).status, 404);
   const historicalTransactions = await (await app.request("/api/transactions", { headers: { cookie } })).json();
-  assert.equal(historicalTransactions.transactions.length, 2);
+  assert.equal(historicalTransactions.transactions.length, 1);
   assert.equal(historicalTransactions.transactions[0].sponsor_name, "Test Marka");
-  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE action = 'delete'").get() as { n: number }).n, 2);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM activity_log WHERE action = 'delete'").get() as { n: number }).n, 3);
   db.close();
 });
