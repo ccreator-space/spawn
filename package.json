@@ -15,6 +15,8 @@
     "admin:create:built": "node dist/server/create-admin.js",
     "backup": "tsx server/backup.ts",
     "backup:built": "node dist/server/backup.js",
+    "data:replace": "tsx server/replace-data.ts",
+    "data:replace:built": "node dist/server/replace-data.js",
     "test": "tsx --test server/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"
   },
