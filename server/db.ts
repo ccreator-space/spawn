@@ -23,7 +23,7 @@ export type Db = ReturnType<typeof openDb>;
 
 function migrate(db: Database.Database) {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 4) throw new Error(`Database schema ${version} is newer than this app`);
+  if (version > 5) throw new Error(`Database schema ${version} is newer than this app`);
   db.transaction(() => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -61,6 +61,8 @@ function migrate(db: Database.Database) {
       kind TEXT NOT NULL CHECK(kind IN ('income','expense','credit')),
       amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
       currency TEXT NOT NULL CHECK(currency IN ('TRY','USD')),
+      applied_minor INTEGER CHECK(applied_minor IS NULL OR applied_minor >= 0),
+      applied_currency TEXT CHECK(applied_currency IS NULL OR applied_currency IN ('TRY','USD')),
       occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -112,11 +114,18 @@ function migrate(db: Database.Database) {
   if (!sponsorColumns.some((column) => column.name === "deleted_at")) db.exec("ALTER TABLE sponsors ADD COLUMN deleted_at TEXT");
   const publicationColumns = db.prepare("PRAGMA table_info(publications)").all() as Array<{ name: string }>;
   if (!publicationColumns.some((column) => column.name === "deleted_at")) db.exec("ALTER TABLE publications ADD COLUMN deleted_at TEXT");
+  const transactionColumns = db.prepare("PRAGMA table_info(transactions)").all() as Array<{ name: string }>;
+  if (!transactionColumns.some((column) => column.name === "applied_minor")) db.exec("ALTER TABLE transactions ADD COLUMN applied_minor INTEGER CHECK(applied_minor IS NULL OR applied_minor >= 0)");
+  if (!transactionColumns.some((column) => column.name === "applied_currency")) db.exec("ALTER TABLE transactions ADD COLUMN applied_currency TEXT CHECK(applied_currency IS NULL OR applied_currency IN ('TRY','USD'))");
+  if (version < 5) db.exec(`
+    UPDATE transactions SET applied_minor = amount_minor, applied_currency = currency
+      WHERE publication_id IS NOT NULL AND kind IN ('income', 'credit') AND applied_minor IS NULL;
+  `);
   db.exec(`
     DROP INDEX IF EXISTS idx_publications_slot;
     CREATE UNIQUE INDEX idx_publications_slot ON publications(planned_date, slot_id)
       WHERE slot_id IS NOT NULL AND status != 'cancelled' AND deleted_at IS NULL;
   `);
-  if (version < 4) db.pragma("user_version = 4");
+  if (version < 5) db.pragma("user_version = 5");
   })();
 }

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Db } from "./db.js";
 import { checkPassword, createSession, hashPassword, sessionUser, tokenHash } from "./auth.js";
-import { summarizeMoney } from "./finance.js";
+import { publicationPayment, summarizeMoney } from "./finance.js";
 import { latestRate } from "./rates.js";
 import { mondayOf, slotsForWeek, validDate, type Slot } from "./schedule.js";
 
@@ -19,7 +19,8 @@ type Publication = {
 };
 type Transaction = {
   id: string; sponsor_id: string | null; publication_id: string | null; kind: string;
-  amount_minor: number; currency: string; occurred_on: string; note: string;
+  amount_minor: number; currency: string; applied_minor: number | null; applied_currency: string | null;
+  occurred_on: string; note: string; publication_title?: string | null;
 };
 
 const failedLogins = new Map<string, { count: number; until: number }>();
@@ -199,8 +200,10 @@ export function createApp(db: Db) {
     const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(id) as Sponsor | undefined;
     if (!sponsor) return c.json({ error: "Sponsor bulunamadı." }, 404);
     const publications = db.prepare("SELECT * FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL ORDER BY planned_date DESC").all(id) as Publication[];
-    const transactions = db.prepare("SELECT * FROM transactions WHERE sponsor_id = ? ORDER BY occurred_on DESC, created_at DESC").all(id) as Transaction[];
-    return c.json({ sponsor, publications, transactions, money: summarizeMoney(publications, transactions), published: publications.filter((p) => p.status === "published" && videoFormats.has(p.format)).length, planned: publications.filter((p) => p.status === "planned" && videoFormats.has(p.format)).length });
+    const transactions = db.prepare(`SELECT transactions.*, publications.title AS publication_title FROM transactions
+      LEFT JOIN publications ON publications.id = transactions.publication_id
+      WHERE transactions.sponsor_id = ? ORDER BY occurred_on DESC, transactions.created_at DESC`).all(id) as Transaction[];
+    return c.json({ sponsor, publications: publications.map((publication) => ({ ...publication, ...publicationPayment(publication, transactions) })), transactions, money: summarizeMoney(publications, transactions), published: publications.filter((p) => p.status === "published" && videoFormats.has(p.format)).length, planned: publications.filter((p) => p.status === "planned" && videoFormats.has(p.format)).length });
   });
   app.patch("/api/sponsors/:id", async (c) => {
     const id = c.req.param("id");
@@ -263,8 +266,9 @@ export function createApp(db: Db) {
   });
   app.get("/api/publications", (c) => {
     const sponsorId = c.req.query("sponsor");
-    const rows = sponsorId ? db.prepare("SELECT * FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL ORDER BY planned_date DESC").all(sponsorId) : db.prepare("SELECT * FROM publications WHERE deleted_at IS NULL ORDER BY planned_date DESC LIMIT 200").all();
-    return c.json({ publications: rows });
+    const rows = (sponsorId ? db.prepare("SELECT * FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL ORDER BY planned_date DESC").all(sponsorId) : db.prepare("SELECT * FROM publications WHERE deleted_at IS NULL ORDER BY planned_date DESC LIMIT 200").all()) as Publication[];
+    const transactions = (sponsorId ? db.prepare("SELECT * FROM transactions WHERE sponsor_id = ?").all(sponsorId) : db.prepare("SELECT * FROM transactions").all()) as Transaction[];
+    return c.json({ publications: rows.map((publication) => ({ ...publication, ...publicationPayment(publication, transactions) })) });
   });
   app.post("/api/publications", async (c) => {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
@@ -321,8 +325,9 @@ export function createApp(db: Db) {
     return c.json({ ok: true, preservedTransactions: linkedTransactions });
   });
 
-  app.get("/api/transactions", (c) => c.json({ transactions: db.prepare(`SELECT transactions.*, sponsors.name AS sponsor_name
+  app.get("/api/transactions", (c) => c.json({ transactions: db.prepare(`SELECT transactions.*, sponsors.name AS sponsor_name, publications.title AS publication_title
     FROM transactions LEFT JOIN sponsors ON sponsors.id = transactions.sponsor_id
+    LEFT JOIN publications ON publications.id = transactions.publication_id
     ORDER BY occurred_on DESC, created_at DESC LIMIT 300`).all() }));
   app.post("/api/transactions", async (c) => {
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
@@ -331,8 +336,9 @@ export function createApp(db: Db) {
     const sponsorId = textValue(body.sponsor_id, 100) || null;
     const publicationId = textValue(body.publication_id, 100) || null;
     const id = randomUUID();
-    db.prepare(`INSERT INTO transactions (id, sponsor_id, publication_id, kind, amount_minor, currency, occurred_on, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(id, sponsorId, publicationId, body.kind, body.amount_minor, body.currency, body.occurred_on, textValue(body.note, 1000));
+    db.prepare(`INSERT INTO transactions (id, sponsor_id, publication_id, kind, amount_minor, currency, applied_minor, applied_currency, occurred_on, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, sponsorId, publicationId, body.kind, body.amount_minor, body.currency,
+        publicationId ? body.applied_minor : null, publicationId ? body.applied_currency : null, body.occurred_on, textValue(body.note, 1000));
     log("transaction", id, "create", c.get("user").id);
     return c.json({ id }, 201);
   });
@@ -344,8 +350,10 @@ export function createApp(db: Db) {
     const error = validateTransaction(body, db);
     if (error) return c.json({ error }, 400);
     db.transaction(() => {
-      db.prepare(`UPDATE transactions SET sponsor_id = ?, publication_id = ?, kind = ?, amount_minor = ?, currency = ?, occurred_on = ?, note = ? WHERE id = ?`)
-        .run(textValue(body.sponsor_id, 100) || null, textValue(body.publication_id, 100) || null, body.kind, body.amount_minor, body.currency, body.occurred_on, textValue(body.note, 1000), id);
+      const publicationId = textValue(body.publication_id, 100) || null;
+      db.prepare(`UPDATE transactions SET sponsor_id = ?, publication_id = ?, kind = ?, amount_minor = ?, currency = ?, applied_minor = ?, applied_currency = ?, occurred_on = ?, note = ? WHERE id = ?`)
+        .run(textValue(body.sponsor_id, 100) || null, publicationId, body.kind, body.amount_minor, body.currency,
+          publicationId ? body.applied_minor : null, publicationId ? body.applied_currency : null, body.occurred_on, textValue(body.note, 1000), id);
       db.prepare("INSERT INTO activity_log (id, user_id, entity, entity_id, action, detail) VALUES (?, ?, ?, ?, ?, ?)")
         .run(randomUUID(), c.get("user").id, "transaction", id, "update", JSON.stringify(previous));
     })();
@@ -353,7 +361,7 @@ export function createApp(db: Db) {
   });
   app.get("/api/dashboard", (c) => {
     const publications = db.prepare("SELECT sponsor_id, fee_minor, currency, status, planned_date FROM publications WHERE deleted_at IS NULL").all() as Publication[];
-    const transactions = db.prepare("SELECT kind, amount_minor, currency FROM transactions").all() as Transaction[];
+    const transactions = db.prepare("SELECT publication_id, kind, amount_minor, currency, applied_minor, applied_currency FROM transactions").all() as Transaction[];
     const sponsorCount = (db.prepare("SELECT COUNT(*) AS n FROM sponsors WHERE deleted_at IS NULL").get() as { n: number }).n;
     return c.json({ sponsorCount, publicationCount: publications.length, publishedCount: publications.filter((p) => p.status === "published").length,
       plannedCount: publications.filter((p) => p.status === "planned").length, money: summarizeMoney(publications, transactions) });
@@ -410,8 +418,12 @@ function validateTransaction(body: Record<string, unknown>, db: Db): string | nu
   if (sponsorId && !db.prepare("SELECT 1 FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(sponsorId)) return "Sponsor bulunamadı.";
   const publicationId = textValue(body.publication_id, 100) || null;
   if (publicationId) {
+    if (body.kind === "expense") return "Gider bir sponsor videosuna bağlanamaz.";
     const publication = db.prepare("SELECT sponsor_id, currency FROM publications WHERE id = ? AND deleted_at IS NULL").get(publicationId) as { sponsor_id: string | null; currency: string } | undefined;
-    if (!publication || publication.sponsor_id !== sponsorId || publication.currency !== body.currency) return "İşlem videosu sponsor ve para birimiyle eşleşmiyor.";
+    if (!publication || publication.sponsor_id !== sponsorId) return "İşlem videosu sponsorla eşleşmiyor.";
+    if (!positiveMinor(body.applied_minor) || body.applied_currency !== publication.currency) return "Videoya işlenecek tutar geçersiz.";
+  } else if (body.applied_minor || body.applied_currency) {
+    return "Videoya işlenen tutar için ilgili videoyu seçin.";
   }
   return null;
 }

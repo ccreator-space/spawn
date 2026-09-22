@@ -47,7 +47,7 @@ test("schema 1 upgrades transactions without losing existing rows", (t) => {
   legacy.close();
 
   const upgraded = openDb(file, { createIfMissing: false });
-  assert.equal(upgraded.pragma("user_version", { simple: true }), 4);
+  assert.equal(upgraded.pragma("user_version", { simple: true }), 5);
   assert.equal((upgraded.prepare("SELECT amount_minor FROM transactions WHERE id = 'old-income'").get() as { amount_minor: number }).amount_minor, 9900);
   upgraded.prepare("INSERT INTO transactions (id, kind, amount_minor, currency, occurred_on) VALUES (?, ?, ?, ?, ?)")
     .run("new-credit", "credit", 700000, "TRY", "2026-09-21");
@@ -91,7 +91,7 @@ test("schema 3 adds safe removal fields without losing records", (t) => {
   legacy.close();
 
   const upgraded = openDb(file, { createIfMissing: false });
-  assert.equal(upgraded.pragma("user_version", { simple: true }), 4);
+  assert.equal(upgraded.pragma("user_version", { simple: true }), 5);
   assert.equal((upgraded.prepare("SELECT name FROM sponsors WHERE id = 'brand'").get() as { name: string }).name, "Korunacak Sponsor");
   assert.equal((upgraded.prepare("SELECT title FROM publications WHERE id = 'video'").get() as { title: string }).title, "Korunacak Video");
   assert.equal((upgraded.prepare("SELECT deleted_at FROM sponsors WHERE id = 'brand'").get() as { deleted_at: string | null }).deleted_at, null);
@@ -106,4 +106,31 @@ test("fresh databases start empty and require onboarding", () => {
   assert.equal((db.prepare("SELECT COUNT(*) AS n FROM schedule_slots").get() as { n: number }).n, 0);
   assert.equal((db.prepare("SELECT onboarding_completed FROM workspace_settings WHERE id = 1").get() as { onboarding_completed: number }).onboarding_completed, 0);
   db.close();
+});
+
+test("schema 4 adds payment allocation fields and preserves finance rows", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "sponsor-payment-upgrade-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "sponsor.db");
+  const legacy = new Database(file);
+  legacy.exec(`
+    CREATE TABLE transactions (
+      id TEXT PRIMARY KEY, sponsor_id TEXT, publication_id TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('income','expense','credit')),
+      amount_minor INTEGER NOT NULL, currency TEXT NOT NULL,
+      occurred_on TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO transactions (id, sponsor_id, publication_id, kind, amount_minor, currency, occurred_on, note)
+      VALUES ('linked-payment', 'brand', 'video', 'income', 1200000, 'TRY', '2026-09-22', 'Korunacak tahsilat');
+    PRAGMA user_version = 4;
+  `);
+  legacy.close();
+
+  const upgraded = openDb(file, { createIfMissing: false });
+  const payment = upgraded.prepare("SELECT amount_minor, currency, applied_minor, applied_currency, note FROM transactions WHERE id = 'linked-payment'").get() as Record<string, unknown>;
+  assert.deepEqual(payment, { amount_minor: 1200000, currency: "TRY", applied_minor: 1200000, applied_currency: "TRY", note: "Korunacak tahsilat" });
+  assert.equal(upgraded.pragma("user_version", { simple: true }), 5);
+  assert.equal(upgraded.pragma("integrity_check", { simple: true }), "ok");
+  upgraded.close();
 });
