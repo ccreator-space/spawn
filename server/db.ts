@@ -23,7 +23,7 @@ export type Db = ReturnType<typeof openDb>;
 
 function migrate(db: Database.Database) {
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 3) throw new Error(`Database schema ${version} is newer than this app`);
+  if (version > 4) throw new Error(`Database schema ${version} is newer than this app`);
   db.transaction(() => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -38,7 +38,8 @@ function migrate(db: Database.Database) {
       id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
       website_url TEXT, logo_url TEXT, notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TEXT
     );
     CREATE TABLE IF NOT EXISTS publications (
       id TEXT PRIMARY KEY, sponsor_id TEXT REFERENCES sponsors(id),
@@ -49,12 +50,11 @@ function migrate(db: Database.Database) {
       currency TEXT NOT NULL CHECK(currency IN ('TRY','USD')),
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_publications_date ON publications(planned_date, platform);
     CREATE INDEX IF NOT EXISTS idx_publications_sponsor ON publications(sponsor_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_publications_slot ON publications(planned_date, slot_id)
-      WHERE slot_id IS NOT NULL AND status != 'cancelled';
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY, sponsor_id TEXT REFERENCES sponsors(id),
       publication_id TEXT REFERENCES publications(id),
@@ -108,6 +108,15 @@ function migrate(db: Database.Database) {
     WEEKLY_SLOTS.forEach((slot, index) => insertSlot.run(slot.id, slot.weekday, slot.platform, slot.format, slot.label, index));
     db.prepare("UPDATE workspace_settings SET onboarding_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = 1").run();
   }
-  if (version < 3) db.pragma("user_version = 3");
+  const sponsorColumns = db.prepare("PRAGMA table_info(sponsors)").all() as Array<{ name: string }>;
+  if (!sponsorColumns.some((column) => column.name === "deleted_at")) db.exec("ALTER TABLE sponsors ADD COLUMN deleted_at TEXT");
+  const publicationColumns = db.prepare("PRAGMA table_info(publications)").all() as Array<{ name: string }>;
+  if (!publicationColumns.some((column) => column.name === "deleted_at")) db.exec("ALTER TABLE publications ADD COLUMN deleted_at TEXT");
+  db.exec(`
+    DROP INDEX IF EXISTS idx_publications_slot;
+    CREATE UNIQUE INDEX idx_publications_slot ON publications(planned_date, slot_id)
+      WHERE slot_id IS NOT NULL AND status != 'cancelled' AND deleted_at IS NULL;
+  `);
+  if (version < 4) db.pragma("user_version = 4");
   })();
 }

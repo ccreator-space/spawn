@@ -24,6 +24,7 @@ Spawn bu süreci içerik planından tahsilata kadar tek yerde yönetir.
 | --- | --- |
 | İçerik takvimi | Her platform için haftalık yayın düzenini oluştur, boş yuvaları ve gerçek içerikleri birlikte gör |
 | Sponsor yönetimi | Marka profili, web sitesi, logo, notlar ve ilgili yayınları tek sayfada tut |
+| Güvenli kaldırma | Sponsor veya içeriği görünümden kaldırırken geçmiş içerik ve finans kayıtlarını koru |
 | Anlaşmalar | İçerik başına ücreti TL veya USD olarak kaydet |
 | Finans | Tahsilat, platform kredisi, gider ve bekleyen alacağı ayrı takip et |
 | Döviz | Doviz.dev üzerinden gelen TCMB referans kuruyla toplamları TL veya USD görüntüle |

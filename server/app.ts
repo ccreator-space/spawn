@@ -10,11 +10,12 @@ import { summarizeMoney } from "./finance.js";
 import { latestRate } from "./rates.js";
 import { mondayOf, slotsForWeek, validDate, type Slot } from "./schedule.js";
 
-type Sponsor = { id: string; slug: string; name: string; website_url: string | null; logo_url: string | null; notes: string };
+type Sponsor = { id: string; slug: string; name: string; website_url: string | null; logo_url: string | null; notes: string; deleted_at?: string | null };
 type Publication = {
   id: string; sponsor_id: string | null; platform: string; format: string; slot_id: string | null;
   title: string; planned_date: string; published_date: string | null; status: string;
   url: string | null; fee_minor: number; currency: string; notes: string; sponsor_name?: string | null;
+  deleted_at?: string | null;
 };
 type Transaction = {
   id: string; sponsor_id: string | null; publication_id: string | null; kind: string;
@@ -173,8 +174,8 @@ export function createApp(db: Db) {
   });
 
   app.get("/api/sponsors", (c) => {
-    const sponsors = db.prepare("SELECT id, slug, name, website_url, logo_url, notes FROM sponsors ORDER BY name COLLATE NOCASE").all() as Sponsor[];
-    const publications = db.prepare("SELECT sponsor_id, format, fee_minor, currency, status FROM publications WHERE sponsor_id IS NOT NULL").all() as Array<Publication>;
+    const sponsors = db.prepare("SELECT id, slug, name, website_url, logo_url, notes FROM sponsors WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE").all() as Sponsor[];
+    const publications = db.prepare("SELECT sponsor_id, format, fee_minor, currency, status FROM publications WHERE sponsor_id IS NOT NULL AND deleted_at IS NULL").all() as Array<Publication>;
     const transactions = db.prepare("SELECT sponsor_id, kind, amount_minor, currency FROM transactions WHERE sponsor_id IS NOT NULL").all() as Array<Transaction>;
     return c.json({ sponsors: sponsors.map((sponsor) => {
       const items = publications.filter((item) => item.sponsor_id === sponsor.id);
@@ -195,15 +196,15 @@ export function createApp(db: Db) {
   });
   app.get("/api/sponsors/:id", (c) => {
     const id = c.req.param("id");
-    const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ?").get(id) as Sponsor | undefined;
+    const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(id) as Sponsor | undefined;
     if (!sponsor) return c.json({ error: "Sponsor bulunamadı." }, 404);
-    const publications = db.prepare("SELECT * FROM publications WHERE sponsor_id = ? ORDER BY planned_date DESC").all(id) as Publication[];
+    const publications = db.prepare("SELECT * FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL ORDER BY planned_date DESC").all(id) as Publication[];
     const transactions = db.prepare("SELECT * FROM transactions WHERE sponsor_id = ? ORDER BY occurred_on DESC, created_at DESC").all(id) as Transaction[];
     return c.json({ sponsor, publications, transactions, money: summarizeMoney(publications, transactions), published: publications.filter((p) => p.status === "published" && videoFormats.has(p.format)).length, planned: publications.filter((p) => p.status === "planned" && videoFormats.has(p.format)).length });
   });
   app.patch("/api/sponsors/:id", async (c) => {
     const id = c.req.param("id");
-    if (!db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(id)) return c.json({ error: "Sponsor bulunamadı." }, 404);
+    if (!db.prepare("SELECT 1 FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(id)) return c.json({ error: "Sponsor bulunamadı." }, 404);
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
     const name = textValue(body.name, 120);
     if (!name || !isUrl(body.website_url) || !isAssetUrl(body.logo_url)) return c.json({ error: "Geçerli sponsor adı, web sitesi ve logo bağlantısı girin." }, 400);
@@ -211,6 +212,21 @@ export function createApp(db: Db) {
       .run(name, textValue(body.website_url, 500) || null, textValue(body.logo_url, 1000) || null, textValue(body.notes, 5000), id);
     log("sponsor", id, "update", c.get("user").id);
     return c.json({ ok: true });
+  });
+  app.delete("/api/sponsors/:id", (c) => {
+    const id = c.req.param("id");
+    const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(id) as Sponsor | undefined;
+    if (!sponsor) return c.json({ error: "Sponsor bulunamadı." }, 404);
+    const counts = {
+      publications: (db.prepare("SELECT COUNT(*) AS n FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL").get(id) as { n: number }).n,
+      transactions: (db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE sponsor_id = ?").get(id) as { n: number }).n,
+    };
+    db.transaction(() => {
+      db.prepare("UPDATE sponsors SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      db.prepare("INSERT INTO activity_log (id, user_id, entity, entity_id, action, detail) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(randomUUID(), c.get("user").id, "sponsor", id, "delete", JSON.stringify({ sponsor, preserved: counts }));
+    })();
+    return c.json({ ok: true, preserved: counts });
   });
 
   app.get("/api/schedule", (c) => {
@@ -222,7 +238,7 @@ export function createApp(db: Db) {
     const endString = end.toISOString().slice(0, 10);
     const publications = db.prepare(`SELECT publications.*, sponsors.name AS sponsor_name FROM publications
       LEFT JOIN sponsors ON sponsors.id = publications.sponsor_id
-      WHERE planned_date BETWEEN ? AND ? ORDER BY planned_date, platform`).all(monday, endString) as Publication[];
+      WHERE publications.deleted_at IS NULL AND planned_date BETWEEN ? AND ? ORDER BY planned_date, platform`).all(monday, endString) as Publication[];
     return c.json({ monday, slots: slotsForWeek(monday, savedSlots(db)), publications });
   });
   app.get("/api/available", (c) => {
@@ -232,7 +248,7 @@ export function createApp(db: Db) {
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const firstWeek = mondayOf(today);
     const occupied = new Set((db.prepare(`SELECT planned_date || ':' || slot_id AS key FROM publications
-      WHERE status != 'cancelled' AND slot_id IS NOT NULL AND planned_date >= ?`).all(today) as Array<{ key: string }>).map((row) => row.key));
+      WHERE deleted_at IS NULL AND status != 'cancelled' AND slot_id IS NOT NULL AND planned_date >= ?`).all(today) as Array<{ key: string }>).map((row) => row.key));
     const available: ReturnType<typeof slotsForWeek> = [];
     for (let week = 0; week < 24 && available.length < limit; week++) {
       const start = new Date(`${firstWeek}T12:00:00Z`);
@@ -247,7 +263,7 @@ export function createApp(db: Db) {
   });
   app.get("/api/publications", (c) => {
     const sponsorId = c.req.query("sponsor");
-    const rows = sponsorId ? db.prepare("SELECT * FROM publications WHERE sponsor_id = ? ORDER BY planned_date DESC").all(sponsorId) : db.prepare("SELECT * FROM publications ORDER BY planned_date DESC LIMIT 200").all();
+    const rows = sponsorId ? db.prepare("SELECT * FROM publications WHERE sponsor_id = ? AND deleted_at IS NULL ORDER BY planned_date DESC").all(sponsorId) : db.prepare("SELECT * FROM publications WHERE deleted_at IS NULL ORDER BY planned_date DESC LIMIT 200").all();
     return c.json({ publications: rows });
   });
   app.post("/api/publications", async (c) => {
@@ -273,7 +289,7 @@ export function createApp(db: Db) {
   });
   app.patch("/api/publications/:id", async (c) => {
     const id = c.req.param("id");
-    if (!db.prepare("SELECT 1 FROM publications WHERE id = ?").get(id)) return c.json({ error: "Yayın bulunamadı." }, 404);
+    if (!db.prepare("SELECT 1 FROM publications WHERE id = ? AND deleted_at IS NULL").get(id)) return c.json({ error: "Yayın bulunamadı." }, 404);
     const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
     body.slot_id = resolvedSlotId(body, db);
     const error = validatePublication(body, db);
@@ -291,6 +307,18 @@ export function createApp(db: Db) {
     }
     log("publication", id, "update", c.get("user").id);
     return c.json({ ok: true });
+  });
+  app.delete("/api/publications/:id", (c) => {
+    const id = c.req.param("id");
+    const publication = db.prepare("SELECT * FROM publications WHERE id = ? AND deleted_at IS NULL").get(id) as Publication | undefined;
+    if (!publication) return c.json({ error: "Yayın bulunamadı." }, 404);
+    const linkedTransactions = (db.prepare("SELECT COUNT(*) AS n FROM transactions WHERE publication_id = ?").get(id) as { n: number }).n;
+    db.transaction(() => {
+      db.prepare("UPDATE publications SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      db.prepare("INSERT INTO activity_log (id, user_id, entity, entity_id, action, detail) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(randomUUID(), c.get("user").id, "publication", id, "delete", JSON.stringify({ publication, preservedTransactions: linkedTransactions }));
+    })();
+    return c.json({ ok: true, preservedTransactions: linkedTransactions });
   });
 
   app.get("/api/transactions", (c) => c.json({ transactions: db.prepare(`SELECT transactions.*, sponsors.name AS sponsor_name
@@ -324,9 +352,9 @@ export function createApp(db: Db) {
     return c.json({ ok: true });
   });
   app.get("/api/dashboard", (c) => {
-    const publications = db.prepare("SELECT sponsor_id, fee_minor, currency, status, planned_date FROM publications").all() as Publication[];
+    const publications = db.prepare("SELECT sponsor_id, fee_minor, currency, status, planned_date FROM publications WHERE deleted_at IS NULL").all() as Publication[];
     const transactions = db.prepare("SELECT kind, amount_minor, currency FROM transactions").all() as Transaction[];
-    const sponsorCount = (db.prepare("SELECT COUNT(*) AS n FROM sponsors").get() as { n: number }).n;
+    const sponsorCount = (db.prepare("SELECT COUNT(*) AS n FROM sponsors WHERE deleted_at IS NULL").get() as { n: number }).n;
     return c.json({ sponsorCount, publicationCount: publications.length, publishedCount: publications.filter((p) => p.status === "published").length,
       plannedCount: publications.filter((p) => p.status === "planned").length, money: summarizeMoney(publications, transactions) });
   });
@@ -360,7 +388,7 @@ function validatePublication(body: Record<string, unknown>, db: Db): string | nu
     return "Seçilen yayın yuvası tarih veya platformla eşleşmiyor.";
   if (!body.slot_id && (typeof body.platform !== "string" || typeof body.format !== "string" || !platforms.has(body.platform)))
     return "Geçerli platform ve format seçin.";
-  if (body.sponsor_id && !db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(body.sponsor_id)) return "Sponsor bulunamadı.";
+  if (body.sponsor_id && !db.prepare("SELECT 1 FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(body.sponsor_id)) return "Sponsor bulunamadı.";
   if (!body.sponsor_id && body.fee_minor !== 0) return "Ücret için sponsor seçin.";
   return null;
 }
@@ -379,10 +407,10 @@ function validateTransaction(body: Record<string, unknown>, db: Db): string | nu
     return "İşlem türü, tutar, para birimi veya tarih geçersiz.";
   const sponsorId = textValue(body.sponsor_id, 100) || null;
   if ((body.kind === "income" || body.kind === "credit") && !sponsorId) return "Tahsilat veya platform kredisi için sponsor seçin.";
-  if (sponsorId && !db.prepare("SELECT 1 FROM sponsors WHERE id = ?").get(sponsorId)) return "Sponsor bulunamadı.";
+  if (sponsorId && !db.prepare("SELECT 1 FROM sponsors WHERE id = ? AND deleted_at IS NULL").get(sponsorId)) return "Sponsor bulunamadı.";
   const publicationId = textValue(body.publication_id, 100) || null;
   if (publicationId) {
-    const publication = db.prepare("SELECT sponsor_id, currency FROM publications WHERE id = ?").get(publicationId) as { sponsor_id: string | null; currency: string } | undefined;
+    const publication = db.prepare("SELECT sponsor_id, currency FROM publications WHERE id = ? AND deleted_at IS NULL").get(publicationId) as { sponsor_id: string | null; currency: string } | undefined;
     if (!publication || publication.sponsor_id !== sponsorId || publication.currency !== body.currency) return "İşlem videosu sponsor ve para birimiyle eşleşmiyor.";
   }
   return null;
