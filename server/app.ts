@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type { Db } from "./db.js";
@@ -9,6 +9,8 @@ import { checkPassword, createSession, hashPassword, sessionUser, tokenHash } fr
 import { publicationPayment, summarizeMoney } from "./finance.js";
 import { latestRate } from "./rates.js";
 import { mondayOf, slotsForWeek, validDate, type Slot } from "./schedule.js";
+import { replaceBusinessData } from "./business-data.js";
+import { dataDir } from "./db.js";
 
 type Sponsor = { id: string; slug: string; name: string; website_url: string | null; logo_url: string | null; notes: string; deleted_at?: string | null };
 type Publication = {
@@ -99,6 +101,17 @@ export function createApp(db: Db) {
     return c.json({ ok: true });
   });
   app.get("/api/me", (c) => c.json({ user: c.get("user") }));
+
+  app.post("/api/admin/replace-business-data", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    if (body.confirmation !== "REPLACE_ALL_BUSINESS_DATA") return c.json({ error: "Eksik veri değiştirme onayı." }, 400);
+    const backupDir = join(dataDir, "backups");
+    mkdirSync(backupDir, { recursive: true });
+    const backup = join(backupDir, `before-replace-${new Date().toISOString().replace(/[:.]/g, "-")}.db`);
+    await db.backup(backup);
+    const result = replaceBusinessData(db, body.data);
+    return c.json({ ok: true, backup, ...result });
+  });
 
   app.get("/api/onboarding", (c) => {
     const settings = db.prepare("SELECT workspace_name, onboarding_completed FROM workspace_settings WHERE id = 1").get() as { workspace_name: string; onboarding_completed: number };
